@@ -1,0 +1,238 @@
+@startuml profile_recovery
+autonumber
+title §3.11.2 Profile Recovery (SGP.22 v3.0)
+footer \n\n3.11.2 Profile Recovery (SGP.22 v3.0)\n<:1f4cc:> https://www.linkedin.com/in/allanalfante/
+skinparam sequenceMessageAlign center
+skinparam ParticipantPadding 20
+skinparam BoxPadding 10
+skinparam SequenceGroupBorderColor #Navy
+
+'''
+'PARTICPANTS
+''''
+actor "End-User" as user
+box "Old Device"
+participant "LPAd" as lpad
+participant "eUICC\nLPA Services(ISD-R)" as euicc
+end box
+database "SM-DP+" as smdp
+participant "Service Provider" as operator
+
+hnote over user, operator
+Start conditions:
+1. Profile deleted during the Device Change procedure.
+2. LPAd indicated recovery support ""DeviceChangeData.profileRecoverySupport""
+3. ""DeviceChangeData.profileRecoveryValidityPeriod"" is still valid
+end note
+
+note over user, lpad #Snow
+End User initiates Profile Recovery operation from old Device
+and selects the Profile that was deleted for Device Change.
+end note
+
+group#LightYellow Common Mutual Authenticantion specific to Profile Recovery 
+
+lpad -> euicc: Calls the <font color=magenta>"ES10b.GetEUICCInfo"</font> function
+rnote left #Motivation 
+GetEuiccInfo1Request ::= SEQUENCE {}
+end note
+
+euicc --> lpad: Sends <font color=magenta>"ES10b.GetEUICCInfo"</font> response
+rnote right #Motivation
+EUICCInfo1 ::= [32] SEQUENCE {
+    lowestSvn [2] VersionType,
+    euiccCiPKIdListForVerification [9],
+    euiccCiPKIdListForSigning [10],
+    euiccCiPKIdListForSigningV3 [17] OPTIONAL,
+    euiccRspCapability [8] EuiccRspCapability OPTIONAL,
+    highestSvn [19] VersionType OPTIONAL
+}
+end note
+
+lpad -> euicc: Calls <font color=magenta>"ES10b.GetEUICCChallenge"</font> request
+  rnote left #Motivation
+  GetEuiccChallengeRequest ::= SEQUENCE {}
+  end note
+
+euicc -> euicc: Generate an eUICC Challenge
+euicc --> lpad: Sends <font color=magenta>"ES10b.GetEUICCChallenge"</font> response
+  rnote right #Motivation
+  GetEuiccChallengeResponse ::= SEQUENCE {
+      euiccChallenge OCTET STRING (SIZE(16))
+  }
+  end note
+
+lpad -> smdp: Calls the <font color=magenta>"ES9+.InitiateAuthentication"</font> request\n(Same function is used for ES11.InitiateAuthentication)
+rnote left #Motivation
+InitiateAuthenticationRequest ::= [57] SEQUENCE {
+  euiccChallenge [1] Octet16,
+  **smdpAddress** [3] UTF8String,
+  euiccInfo1 **EUICCInfo1**,
+  lpaRspCapability LpaRspCapability OPTIONAL
+}
+end note
+
+smdp --> lpad: Sends <font color=magenta>"ES9+.InitiateAuthentication"</font> response.
+rnote right #Motivation
+InitiateAuthenticationResponse ::= [57] CHOICE { 
+    initiateAuthenticationOk InitiateAuthenticationOkEs9,
+    initiateAuthenticateError INTEGER {      
+    },
+}
+InitiateAuthenticationOkEs9 ::= SEQUENCE {
+    **transactionId** [0] TransactionId,
+    serverSigned1 **ServerSigned1**,
+    serverSignature1 [APPLICATION 55] OCTET STRING,
+    euiccCiPKIdToBeUsed SubjectKeyIdentifier OPTIONAL, 
+    serverCertificate Certificate,
+    otherCertsInChain [1] CertificateChain OPTIONAL, 
+    crlList [2] SEQUENCE OF CertificateList OPTIONAL 
+}
+**ServerSigned1** ::= SEQUENCE {
+  transactionId TransactionId,
+  euiccChallenge Octet16,
+  serverAddress UTF8String,
+  serverChallenge Octet16,
+  sessionContext SessionContext OPTIONAL, 
+  serverRspCapability ServerRspCapability OPTIONAL 
+}
+end note
+
+lpad -> euicc: Calls the <font color=magenta>"ES10b.AuthenticateServer"</font> request
+rnote left #Motivation
+AuthenticateServerRequest ::= [56] SEQUENCE { 
+    serverSigned1 ServerSigned1, 
+    serverSignature1 [APPLICATION 55] OCTET STRING, 
+    euiccCiPKIdToBeUsed SubjectKeyIdentifier OPTIONAL, 
+    serverCertificate Certificate, -
+    ctxParams1 **CtxParams1**,
+    otherCertsInChain [1] CertificateChain OPTIONAL, 
+    crlList [2] SEQUENCE OF CertificateList OPTIONAL 
+}
+ServerSigned1 ::= SEQUENCE {
+    transactionId [0] TransactionId, 
+    euiccChallenge [1] Octet16, 
+    serverAddress [3] UTF8String, 
+    serverChallenge [4] Octet16, 
+    sessionContext [5] SessionContext OPTIONAL, 
+    serverRspCapability [6] ServerRspCapability OPTIONAL 
+}
+CtxParams1 ::= **CHOICE** {
+    ctxParamsForCommonAuthentication[0] CtxParamsForCommonAuthentication,
+    ctxParamsForDeviceChange [1] CtxParamsForDeviceChange,
+    ctxParamsForProfileRecovery [2] **CtxParamsForProfileRecovery**,
+    ctxParamsForPushServiceRegistration [3] CtxParamsForPushServiceRegistration 
+}
+**CtxParamsForProfileRecovery** ::= SEQUENCE { 
+    iccid Iccid,
+    deviceInfo [1] **DeviceInfo**,
+    vendorSpecificExtension [2] VendorSpecificExtension OPTIONAL
+}
+**DeviceInfo** ::= SEQUENCE {
+    tac Octet4,
+    deviceCapabilities DeviceCapabilities,
+    imei Octet8 OPTIONAL,
+    preferredLanguages SEQUENCE OF UTF8String OPTIONAL, 
+    deviceTestMode NULL OPTIONAL, 
+    lpaRspCapability LpaRspCapability OPTIONAL
+}
+end note
+
+euicc --> lpad: Send <font color=magenta>"ES10b.AuthenticateServer"</font> response
+rnote right #Motivation
+**AuthenticateServerResponse** ::= [56] CHOICE {
+  authenticateResponseOk [0] AuthenticateResponseOk,
+  authenticateResponseError [1] AuthenticateResponseError
+}
+
+AuthenticateResponseOk ::= SEQUENCE {
+  euiccSigned1 **EuiccSigned1**,
+  euiccSignature1 [APPLICATION 55] OCTET STRING, 
+  euiccCertificate Certificate, 
+  nextCertInChain Certificate, 
+  otherCertsInChain [0]  CertificateChain OPTIONAL 
+}
+
+EuiccSigned1 ::= SEQUENCE {
+  transactionId [0] TransactionId,
+  serverAddress [3] UTF8String,
+  serverChallenge [4] Octet16,
+  euiccInfo2[34] EUICCInfo2,
+  ctxParams1 **CtxParams1**
+}
+end note  
+end
+
+lpad -> smdp: Calls the <font color=magenta>"ES9+.AuthenticateClient"</font> request\n(CtxParamsForProfileRecovery)
+rnote left #MOTIVATION
+AuthenticateClientRequest ::= [59] SEQUENCE { 
+    transactionId [0] TransactionId,
+    authenticateServerResponse [56] **AuthenticateServerResponse**, 
+    deleteNotificationForDc [1] DeleteNotificationForDc 
+}
+end note
+
+smdp -> operator: The SM-DP+ MAY interact with the\nService Provider for the Profile preparation.
+
+smdp --> lpad: Send <font color=magenta>"ES9+.AuthenticateClient"</font> response
+rnote right #Motivation 
+AuthenticateClientResponseEs9 ::= [59] **CHOICE** {
+    authenticateClientOk AuthenticateClientOk,
+    authenticateClientError INTEGER {
+    },
+    authenticateClientOkRpm AuthenticateClientOkRpm, 
+    authenticateClientOkDeviceChange **AuthenticateClientOkDeviceChange** 
+}
+AuthenticateClientOkDeviceChange ::= SEQUENCE {
+    transactionId [0] TransactionId,
+    smdpSigned4 [1] **SmdpSigned4**,
+    smdpSignature4 [APPLICATION 55] OCTET STRING, -
+    serviceProviderMessageForDc [1] LocalisedTextMessage OPTIONAL 
+}
+**SmdpSigned4** ::= SEQUENCE {
+transactionId [0] TransactionId,
+ccRequiredFlag BOOLEAN,
+<font color=red>**activationCodeForProfileRecovery**</font> [1] UTF8String (SIZE(0..255)) OPTIONAL 
+-- only in profileRecoveryRequest
+}
+end note
+
+lpad -> euicc: Calls the <font color=magenta>"ES10b.VerifyDeviceChange"</font> request
+rnote left #MOTIVATION
+VerifyDeviceChangeRequest ::= [75] **CHOICE** {
+    deviceChangeConfirmation [0] SEQUENCE {
+        smdpSigned5 SmdpSigned5, 
+        smdpSignature5 [APPLICATION 55] OCTET STRING
+    }
+}
+SmdpSigned5 ::= SEQUENCE {
+    transactionId [0] TransactionId,
+    deviceChangeResponse [1] DeviceChangeResponse OPTIONAL
+}
+DeviceChangeResponse ::= **CHOICE** {
+    deviceChangeData [0] DeviceChangeData,
+}
+DeviceChangeData ::= SEQUENCE {
+    iccid Iccid,
+    activationCodeForDc [0] UTF8String (SIZE(0..255)),
+    deleteOldProfile [1] NULL OPTIONAL,
+    deleteNotificationForDcSupport [2] NULL OPTIONAL,
+    notificationAddress [3] UTF8String OPTIONAL,
+    <font color=red>**profileRecoverySupport**</font> [4] NULL OPTIONAL,
+    <font color=red>**profileRecoveryValidityPeriod**</font> [5] GeneralizedTime OPTIONAL
+}
+end note
+
+euicc --> lpad: Sends <font color=magenta>"ES10b.VerifyDeviceChange"</font> response
+rnote right #MOTIVATION
+VerifyDeviceChangeResponse ::= [75] **CHOICE** {
+    verifyDeviceChangeOk **CHOICE** {
+        verifyDeviceChangeData [1] **DeviceChangeData**
+    },
+}
+end note
+
+hnote over user, operator
+Proceed to §3.1.3 Profile Download and Installation Procedure
+end note
+@enduml

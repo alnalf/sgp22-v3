@@ -1,0 +1,86 @@
+@startuml rpm_exe_disable
+autonumber
+title §3.7.3.2 RPM Execution - Disable Profile (SGP.22 v3.0)
+footer \n\n§3.7.3.2 RPM Execution - Disable Profile (SGP.22 v3.0)\n<:1f4cc:> https://www.linkedin.com/in/allanalfante/
+skinparam sequenceMessageAlign center
+skinparam ParticipantPadding 20
+skinparam BoxPadding 10
+skinparam SequenceGroupBorderColor #Navy
+
+'''
+'PARTICPANTS
+''''
+'participant "Operator" as operator
+'database "SM-DP+" as smdp
+box "Device" #WhiteSmoke
+  participant "LPAd" as lpad
+  participant "eUICC\nLPA Services (ISD-R)" as euicc
+  'participant "Device Baseband" as baseband
+end box
+
+'''
+'CALL FLOW
+''''
+lpad -> euicc: Calls <font color=magenta>"ES10b.LoadRpmPackage"</font> function on Command Port\n**<:rotating_light:> Initiates execution of RPM Package occurs here**
+rnote left #MOTIVATION
+LoadRpmPackageRequest ::= [68] SEQUENCE {
+    smdpSigned3 **SmdpSigned3**,
+    **smdpSignature3** [APPLICATION 55] OCTET STRING,
+    **targetEsimPort** INTEGER OPTIONAL
+}
+SmdpSigned3 ::= SEQUENCE {
+    transactionId [0] **TransactionId**,
+    rpmPackage [1] RpmPackage,
+    rpmPending [2] NULL OPTIONAL
+}
+
+RpmPackage ::= SEQUENCE OF **RpmCommand**
+**RpmCommand** ::= SEQUENCE {
+  **continueOnFailure** [0] NULL OPTIONAL,
+  rpmCommandDetails CHOICE {
+      __**disable [2] SEQUENCE { iccid [APPLICATION 26] Iccid },**__
+  }
+}
+end note
+
+==Execute Disable Profile==
+
+note over euicc #Snow
+ISD-R must...
+
+[1] Find Target Profile type and state with the ICCID
+[2] Verify the authorisation of the SM-DP+ for the RPM Command
+[3] Enforce rules (PPRs/Enterprise)
+end note
+
+euicc -> euicc: Verify and execute
+
+euicc -> euicc: Generate LoadRpmPackageResult
+
+euicc -> lpad: Sends <font color=magenta>"ES10b.LoadRpmPackage"</font> response
+rnote right #MOTIVATION
+LoadRpmPackageResult ::= [68] CHOICE { 
+    loadRpmPackageResultSigned LoadRpmPackageResultSigned,
+}
+LoadRpmPackageResultSigned ::= SEQUENCE {
+    loadRpmPackageResultDataSigned LoadRpmPackageResultDataSigned,
+    euiccSignRPR EuiccSign
+}
+LoadRpmPackageResultDataSigned ::= SEQUENCE {
+    transactionId [0] TransactionId,
+    notificationMetadata [47] NotificationMetadata,
+    smdpOid OBJECT IDENTIFIER, 
+    **finalResult** [2] CHOICE {
+        rpmPackageExecutionResult SEQUENCE OF **RpmCommandResult**,
+    }
+}
+**RpmCommandResult** ::= SEQUENCE { 
+    iccid [APPLICATION 26] Iccid OPTIONAL, 
+    rpmCommandResultData **CHOICE** {
+        __**disableResult [50] DisableProfileResponse,**__ 
+    }
+}
+end note
+
+==Disable Profile==
+@enduml

@@ -1,0 +1,64 @@
+@startuml event_checking
+autonumber
+
+title §3.6.4 Event Checking (SGP.22 v3.0)
+footer \n\n§3.6.4 Event Checking (SGP.22 v3.0)\n<:1f4cc:> https://www.linkedin.com/in/allanalfante/
+skinparam sequenceMessageAlign center
+skinparam ParticipantPadding 20
+skinparam BoxPadding 10
+skinparam SequenceGroupBorderColor #Navy
+
+
+'''
+'PARTICPANTS
+''''
+database "SM-DS" as smds
+participant "LPAd" as lpad
+
+
+
+'''
+'CALL FLOW
+''''
+hnote over smds, lpad
+Refer to §3.0.1 Common Mutual Authentication Procedure (LPAd establishes a HTTPS connection with the SM-DS).
+end note
+
+note over smds #Snow
+s
+end note
+
+lpad -> smds: Call the <font color=magenta>"ES11.EventCheck"</font> function
+rnote right #Motivation 
+CheckEventRequest ::= SEQUENCE {
+  **ecId** OCTET STRING (SIZE(16..32)),
+  smdsAddress UTF8String
+}
+end note
+
+alt#Gold <font color=red>if ecId is not valid</font>
+smds -> lpad: Sends <font color=magenta>"ES11.EventCheck"</font> response
+rnote left #Motivation 
+CheckEventResponse ::= [70] CHOICE {
+  checkEventError INTEGER {
+    **expiredEcid**(3), -- #SupportedForEventCheckingV3.0.0#
+    **unknownEcid**(4), -- #SupportedForEventCheckingV3.0.0#
+  }
+}
+end note
+lpad -> lpad: Delete **ecId**
+
+else <font color=green>ecId is valid</font>
+autonumber 2
+smds -> lpad: Sends <font color=magenta>"ES11.EventCheck"</font> response
+destroy smds
+rnote left #Motivation 
+CheckEventResponse ::= [70] CHOICE {
+  checkEventOk CheckEventOk
+}
+CheckEventOk ::= SEQUENCE {
+  **isPendingEvent** true
+}
+end note
+end
+@enduml

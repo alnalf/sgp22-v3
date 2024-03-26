@@ -1,0 +1,93 @@
+@startuml delete_profile
+autonumber
+title §3.2.3 Delete Profile (SGP.22 v3.0)
+footer \n\n§3.2.3 Delete Profile (SGP.22 v3.0)\n<:1f4cc:> https://www.linkedin.com/in/allanalfante/
+
+skinparam sequenceMessageAlign center
+skinparam ParticipantPadding 20
+skinparam BoxPadding 10
+skinparam SequenceGroupBorderColor #Navy
+
+'''
+'PARTICPANTS
+''''
+actor "End User" as user
+box "Device" #WhiteSmoke
+  participant "LUId" as luid
+  participant "eUICC\nLPA Services (ISD-R)" as services
+  participant "Device Baseband" as baseband
+end box
+
+'''
+'CALL FLOW
+''''
+note over user, luid #Snow
+1. End User sees list of installed Profiles (Enabled/Disabled).
+2. End User selects Profile to be **Deleted**.
+3. The LPAd SHALL ask for Strong Confirmation by presenting the consequences.
+end note
+
+opt <font color=red>if Profile to be deleted is Enabled, then it has to be DISABLED first</font>
+luid -> services: Command Port calls <font color=magenta>"ES10c.DisableProfile"</font> function
+  rnote left #Motivation
+    DisableProfileRequest ::= SEQUENCE {
+      profileIdentifier CHOICE {
+        isdpAid [APPLICATION 15] Octet16,
+        iccid Iccid -- ICCID,
+      },
+      **refreshFlag** BOOLEAN
+    } 
+  end note
+
+services --> luid: Sends <font color=magenta>"ES10c.DisableProfile"</font> response
+  rnote right #Motivation
+    DisableProfileResponse ::= SEQUENCE { -- Tag 'BF31'
+      disableResult INTEGER {
+        ok(0),
+      }
+    }
+  end note
+services -> baseband: Sends REFRESH to Target Port
+baseband --> services: Terminal response or RESET of Target Port
+  note over services #Snow
+  ISD-R SHALL **DISABLE** the Profile
+  end note
+end
+
+luid -> services: Command Port calls <font color=magenta>"ES10c.DeleteProfile"</font> function
+  rnote left #Motivation
+    DeleteProfileRequest ::= SEQUENCE {
+      profileIdentifier CHOICE {
+        isdpAid [APPLICATION 15] Octet16,
+        iccid Iccid -- ICCID,
+      }
+    } 
+  end note
+
+opt <font color=red>If Profile is not Enabled or other possible errors</font>
+  services --> luid: Sends <font color=magenta>"ES10c.DeleteProfile"</font> response
+    rnote right #Motivation
+      DeleteProfileResponse ::= SEQUENCE { -- Tag 'BF31'
+        deleteResult INTEGER {
+          profileNotInDisabledState(2),
+          disallowedByPolicy(3)
+        }
+      }
+    end note
+end
+
+  note over services #Snow
+  eUICC SHALL **DELETE** the Profile
+  end note
+
+services --> luid: Sends <font color=magenta>"ES10c.DeleteProfile"</font> response
+  rnote right #Motivation
+    DeleteProfileResponse ::= SEQUENCE { -- Tag 'BF31'
+      deleteResult INTEGER {
+        ok(0),
+      }
+    }
+  end note
+
+
+@enduml

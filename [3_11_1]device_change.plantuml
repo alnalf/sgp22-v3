@@ -1,0 +1,413 @@
+@startuml device_change
+autonumber
+title §3.11.1 Device Change (SGP.22 v3.0)
+footer \n\n3.11.1 Device Change (SGP.22 v3.0)\n<:1f4cc:> https://www.linkedin.com/in/allanalfante/
+skinparam sequenceMessageAlign center
+skinparam ParticipantPadding 20
+skinparam BoxPadding 10
+skinparam SequenceGroupBorderColor #Navy
+
+'''
+'PARTICPANTS
+''''
+actor "End-User" as user
+box "Old Device"
+participant "LPAd" as old_lpad
+participant "eUICC\nLPA Services(ISD-R)" as old_euicc
+end box
+database "SM-DP+" as smdp
+box "New Device"
+participant "LPAd" as new_lpad
+participant "eUICC\nLPA Services(ISD-R)" as new_euicc
+end box
+participant "Operator" as operator
+
+note over user, old_lpad #Snow
+End User initiates the Device Change operation from old Device
+and selects the Profile to be installed in their new Device.
+
+LPA shall be able to allow Device Change for one or more Profiles.
+end note
+
+old_lpad -> old_euicc: Call the <font color=magenta>"ES10c.GetProfilesInfo"</font> function
+  rnote left #Motivation
+  ProfileInfoListRequest ::= [45] SEQUENCE {
+    searchCriteria [0] CHOICE {
+        isdpAid [APPLICATION 15] OctetTo16,
+        iccid Iccid,
+        profileClass [21] ProfileClass
+    } OPTIONAL,
+    tagList [APPLICATION 28] OCTET STRING OPTIONAL
+}
+  end note
+
+old_euicc --> old_lpad: Sends <font color=magenta>"ES10c.GetProfilesInfo"</font> response
+rnote right #Motivation
+ProfileInfoListResponse ::= [45] **CHOICE** {
+    profileInfoListOk SEQUENCE OF ProfileInfo,
+}
+
+ProfileInfo ::= [PRIVATE 3] SEQUENCE {
+    ...,
+    deviceChangeConfiguration [32] **DeviceChangeConfiguration** OPTIONAL,
+    ...
+}
+
+**DeviceChangeConfiguration** ::= **CHOICE** { 
+    **requestToDp** [0] SEQUENCE {
+        **smdpAddressForDc** UTF8String,
+        allowedCiPKId SubjectKeyIdentifier OPTIONAL, 
+        address that processes the Device Change
+        eidRequired NULL OPTIONAL, 
+        tacRequired NULL OPTIONAL
+    },
+    **usingStoredAc** [1] SEQUENCE {
+        activationCodeForDc UTF8String (SIZE(0..255)), -- Activation Code 
+            for Device Change of this Profile
+        deleteOldProfile NULL OPTIONAL -- deletion of this Profile is 
+            required before providing the Activation code to the new Device
+    }
+}
+end note
+
+== if DeviceChangeConfiguration=requestToDp ==
+note over old_lpad #Snow
+<:rotating_light:> retrieve **smdpAddressForDc** value
+will be used as **smdpAddress** in the request.
+end note
+
+group#LightYellow Initiate Common Mutual Authentication specific to __Device Change__ 
+
+  old_lpad -> smdp: Calls the <font color=magenta>"ES9+.InitiateAuthentication"</font> request
+  rnote left #Motivation
+    InitiateAuthenticationRequest ::= [57] SEQUENCE {
+      euiccChallenge [1] Octet16, 
+      **smdpAddress** [3] UTF8String,
+      euiccInfo1 EUICCInfo1,
+      lpaRspCapability LpaRspCapability OPTIONAL
+    }
+  end note
+  
+  smdp --> old_lpad: Sends <font color=magenta>"ES9+.InitiateAuthentication"</font> response
+  rnote right #Motivation
+  InitiateAuthenticationResponse ::= [57] CHOICE {
+      initiateAuthenticationOk InitiateAuthenticationOkEs9,
+  }
+  
+  InitiateAuthenticationOkEs9 ::= SEQUENCE {
+      transactionId [0] TransactionId, 
+      serverSigned1 **ServerSigned1**, 
+      serverSignature1 [APPLICATION 55] OCTET STRING, 
+      euiccCiPKIdToBeUsed SubjectKeyIdentifier OPTIONAL, 
+      serverCertificate Certificate,
+      otherCertsInChain [1] CertificateChain OPTIONAL, 
+      crlList [2] SEQUENCE OF CertificateList OPTIONAL 
+  }
+  end note
+  
+  note over user, old_lpad #Snow
+  <:rotating_light:> LPAd knows what **CtxParams1** to generate
+  because it was requested by the user from
+  the first sequence. Check above!
+  end note
+
+  old_lpad -> old_euicc: Calls the <font color=magenta>"ES10b.AuthenticateServer"</font> function.
+  rnote left #Motivation
+  AuthenticateServerRequest ::= [56] SEQUENCE { 
+      serverSigned1 **ServerSigned1**,
+      serverSignature1 [APPLICATION 55] OCTET STRING,
+      euiccCiPKIdToBeUsed SubjectKeyIdentifier OPTIONAL,
+      serverCertificate Certificate,
+      ctxParams1 **CtxParams1**,
+      otherCertsInChain [1] CertificateChain OPTIONAL,
+      crlList [2] SEQUENCE OF CertificateList OPTIONAL
+  }
+  **CtxParams1** ::= CHOICE {
+      ctxParamsForDeviceChange [1] **CtxParamsForDeviceChange**,
+  }
+  **CtxParamsForDeviceChange** ::= SEQUENCE {
+      iccid Iccid,
+      deviceInfo [1] DeviceInfo,
+      **targetEidValue** [APPLICATION 26] Octet16 OPTIONAL,
+      **targetTacValue** [2] Octet4 OPTIONAL,
+      vendorSpecificExtension [3] VendorSpecificExtension OPTIONAL
+  }
+  DeviceInfo ::= SEQUENCE {
+      tac Octet4,
+      deviceCapabilities DeviceCapabilities,
+      imei Octet8 OPTIONAL,
+      preferredLanguages SEQUENCE OF UTF8String OPTIONAL, 
+      deviceTestMode NULL OPTIONAL, 
+      lpaRspCapability LpaRspCapability OPTIONAL
+  }
+  end note
+  
+  old_euicc --> old_lpad: Send <font color=magenta>"ES10b.AuthenticateServer"</font> response
+  rnote right #Motivation
+  **AuthenticateServerResponse** ::= [56] CHOICE {
+      authenticateResponseOk [0] AuthenticateResponseOk,
+  }
+  
+  AuthenticateResponseOk ::= SEQUENCE {
+      euiccSigned1 EuiccSigned1,
+      euiccSignature1 [APPLICATION 55] OCTET STRING,
+      euiccCertificate Certificate, 
+      nextCertInChain Certificate, 
+      otherCertsInChain [0] CertificateChain OPTIONAL
+  }
+  
+  EuiccSigned1 ::= SEQUENCE {
+      transactionId [0] **TransactionId**,
+      serverAddress [3] UTF8String,
+      serverChallenge [4] Octet16,
+      euiccInfo2 [34] EUICCInfo2,
+      ctxParams1 **CtxParams1**
+  }
+  end note
+end
+
+old_lpad -> smdp: Calls the <font color=magenta>"ES9+.AuthenticateClient"</font> function
+  rnote left #Motivation
+  AuthenticateClientRequest ::= [59] SEQUENCE {
+      transactionId [0] **TransactionId**,
+      authenticateServerResponse [56] **AuthenticateServerResponse**
+      deleteNotificationForDc [1] DeleteNotificationForDc
+  }
+  end note
+
+
+smdp -> operator: Call the <font color=magenta>ES2+.HandleDeviceChangeRequest</font> request
+  rnote left 
+  POST /gsma/rsp3/es2plus/handleDeviceChangeRequest HTTP/1.1
+  
+  {
+    "**iccid**": "1234567890123456789F",
+    "eid": "98765432109876543210987654321098", -- //new device//
+    "tac": "12345678" -- //new device//
+  }
+  end note
+
+operator --> smdp: Sends <font color=magenta>ES2+.HandleDeviceChangeRequest</font> response 
+  rnote right
+  HTTP/1.1 200 OK
+  
+  {
+    **"isNewProfileRequired": true**,
+    "serviceProviderMessageForDc": "someMessage",
+    "cc": "ConfirmationCode" 
+  }
+  end note
+
+smdp -> operator: Call the <font color=magenta>ES2+.HandleNotification</font>\n(Notification only - response not required) 
+  rnote left 
+  POST /gsma/rsp3/es2plus/handleNotification HTTP/1.1
+  
+  {
+    **"notificationEvent": "12"**, -- //Device Change Request//
+  }
+  end note
+
+smdp --> old_lpad: Send <font color=magenta>"ES9+.AuthenticateClient"</font> response
+  rnote right #Motivation
+  AuthenticateClientResponseEs9 ::= [59] CHOICE { -- Tag 'BF3B'
+    authenticateClientOkDeviceChange AuthenticateClientOkDeviceChange 
+  }
+  
+  **AuthenticateClientOkDeviceChange** ::= SEQUENCE {
+      transactionId [0] **TransactionId**,
+      smdpSigned4 [1] **SmdpSigned4**, 
+      smdpSignature4 [APPLICATION 55] OCTET STRING, 
+      serviceProviderMessageForDc [1] **LocalisedTextMessage** OPTIONAL
+  }
+
+  SmdpSigned4 ::= SEQUENCE { -- #SupportedForDcV3.0.0#
+    transactionId [0] TransactionId, 
+    **ccRequiredFlag** BOOLEAN, -- //Confirmation Code//
+    activationCodeForProfileRecovery [1] UTF8String (SIZE(0..255)) OPTIONAL 
+  }
+  end note
+
+par#LightBlue if isNewProfileRequired = true
+note over smdp, operator #Snow
+Execute §3.1.1 Profile download initiation
+(parallel process as indicated)
+end note
+end
+
+note over old_lpad #Snow
+LPAd must:
+
+1. Display **LocalisedTextMessage** from ES9+.AuthenticateClient response.
+2. Request user for the confirmation code if **ccRequiredFlag** is TRUE
+end note
+
+old_lpad -> old_euicc: Calls the <font color=magenta>"ES10b.PrepareDeviceChange"</font> request
+rnote left #Motivation
+PrepareDeviceChangeRequest ::= [77] SEQUENCE { 
+    smdpSigned4 SmdpSigned4, -- Signed information
+    smdpSignature4 [APPLICATION 55] OCTET STRING,
+    hashCc Octet32 OPTIONAL -- //Hash of confirmation code//
+}
+end note
+
+old_euicc --> old_lpad: Sends <font color=magenta>"ES10b.PrepareDeviceChange"</font> response
+rnote right #MOTIVATION
+PrepareDeviceChangeResponseOk ::= SEQUENCE {
+    euiccSigned3 EUICCSigned3, -- Signed information
+    euiccSignature3 [APPLICATION 55] OCTET STRING -- tag '5F37'
+}
+EUICCSigned3 ::= SEQUENCE { 
+    transactionId [0] TransactionId,
+    euiccOtpk [APPLICATION 73] OCTET STRING OPTIONAL, 
+    hashCc Octet32 OPTIONAL, -- Hash of confirmation code
+    additionalInformation VendorSpecificExtension OPTIONAL
+}
+end note
+
+old_lpad -> smdp: Calls the <font color=magenta>"ES9+.ConfirmDeviceChange"</font> request
+rnote left #MOTIVATION
+ConfirmDeviceChangeRequest ::= [76] SEQUENCE {
+    transactionId TransactionId,
+    prepareDownloadResponse [33] PrepareDownloadResponse
+}
+PrepareDownloadResponse ::= [33] CHOICE { 
+    downloadResponseOk PrepareDownloadResponseOk,
+}
+PrepareDownloadResponseOk ::= SEQUENCE {
+    euiccSigned2 EUICCSigned2, 
+    euiccSignature2 [APPLICATION 55] OCTET STRING 
+}
+end note
+
+smdp -> operator: Call the <font color=magenta>ES2+.HandleNotification</font>\n(Notification only - response not required) 
+  rnote left 
+  POST /gsma/rsp3/es2plus/handleNotification HTTP/1.1
+  
+  {
+    **"notificationEvent": "13"**, -- //Device Change Confirmation//
+  }
+  end note
+
+smdp -> smdp: Prepare Profile\nidentified by ICCID
+
+smdp -> operator: Call the <font color=magenta>ES2+.HandleNotification</font>\n(Notification only - response not required) 
+  rnote left 
+  POST /gsma/rsp3/es2plus/handleNotification HTTP/1.1
+  
+  {
+    **"notificationEvent": "15"**, -- //Profile preparation for Device Change//
+  }
+  end note
+
+smdp --> old_lpad: Sends <font color=magenta>"ES9+.ConfirmDeviceChange"</font> response
+rnote right #MOTIVATION
+ConfirmDeviceChangeOk ::= SEQUENCE {
+    transactionId [0] TransactionId,
+    smdpSigned5 SmdpSigned5,
+    smdpSignature5 OCTET STRING
+}
+SmdpSigned5 ::= SEQUENCE {
+    transactionId [0] TransactionId,
+    deviceChangeResponse [1] DeviceChangeResponse OPTIONAL
+}
+DeviceChangeResponse ::= **CHOICE** {
+    deviceChangeData [0] DeviceChangeData,
+}
+DeviceChangeData ::= SEQUENCE {
+    iccid Iccid,
+    **activationCodeForDc** [0] UTF8String (SIZE(0..255)),
+    **deleteOldProfile** [1] NULL OPTIONAL,
+end note
+
+note over old_lpad, old_euicc #Snow
+[**DISABLE** the target profile]
+end note
+
+old_lpad -> old_euicc: Calls the <font color=magenta>"ES10b.VerifyDeviceChange"</font> request
+rnote left #MOTIVATION
+VerifyDeviceChangeRequest ::= [75] **CHOICE** {
+    deviceChangeConfirmation [0] SEQUENCE {
+        smdpSigned5 SmdpSigned5, -- Signed information
+        smdpSignature5 [APPLICATION 55] OCTET STRING
+    }
+}
+SmdpSigned5 ::= SEQUENCE {
+    transactionId [0] TransactionId,
+    deviceChangeResponse [1] DeviceChangeResponse OPTIONAL
+}
+DeviceChangeResponse ::= **CHOICE** {
+    deviceChangeData [0] DeviceChangeData,
+}
+DeviceChangeData ::= SEQUENCE {
+    iccid Iccid,
+    activationCodeForDc [0] UTF8String (SIZE(0..255)),
+    deleteOldProfile [1] NULL OPTIONAL,
+    deleteNotificationForDcSupport [2] NULL OPTIONAL,
+    notificationAddress [3] UTF8String OPTIONAL,
+    profileRecoverySupport [4] NULL OPTIONAL,
+    profileRecoveryValidityPeriod [5] GeneralizedTime OPTIONAL
+}
+end note
+
+old_euicc --> old_lpad: Sends <font color=magenta>"ES10b.VerifyDeviceChange"</font> response
+rnote right #MOTIVATION
+VerifyDeviceChangeResponse ::= [75] **CHOICE** {
+    verifyDeviceChangeOk **CHOICE** {
+        verifyDeviceChangeData [1] **DeviceChangeData**
+    },
+}
+end note
+
+== Common Step // Jump directly here if DeviceChangeConfiguration=usingStoredAc ==
+
+note over old_lpad, old_euicc #Snow
+[**DELETE** the target profile]
+end note
+
+old_lpad -> smdp: Calls the <font color=magenta>"ES9+.HandleNotification"</font>\n(Notification only - response not required) 
+rnote left #MOTIVATION
+HandleNotification ::= [61] SEQUENCE { -- Tag 'BF3D'
+    pendingNotification PendingNotification
+}
+PendingNotification ::= CHOICE {
+    otherSignedNotification OtherSignedNotification,
+}
+OtheSignedNotification ::= SEQUENCE {
+    bsOtherNotification NotificationMetadata,
+    uiccNotificationSignature EuiccSign,
+    uiccCertificate Certificate,
+    nextCertInChain Certificate,
+    otherCertsInChain [1] CertificateChain OPTIONAL
+}
+NotificationMetadata ::= [47] SEQUENCE {
+    seqNumber [0] INTEGER,
+    profileManagementOperation [1] NotificationEvent, 
+    notificationAddress UTF8String,
+    iccid Iccid OPTIONAL
+}
+NotificationEvent ::= BIT STRING {
+    notificationInstall(0),
+    notificationLocalEnable(1),
+    notificationLocalDisable(2),
+    **notificationLocalDelete(3)**,
+    notificationRpmEnable(4),
+    notificationRpmDisable(5),
+    notificationRpmDelete(6),
+    loadRpmPackageResult(7)
+}
+end note
+
+
+old_lpad -> old_lpad: Generate Activation Code containing\nDelete Notification for Device Change
+
+old_lpad -> new_lpad: Provide Activation Code\n(Out of Scope of SGP.22)
+note over smdp, operator #Snow
+Execute **§3.1.3** Profile download and installation procedure
+end note
+
+
+
+
+
+
+@enduml

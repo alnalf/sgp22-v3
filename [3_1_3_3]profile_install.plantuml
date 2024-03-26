@@ -1,0 +1,239 @@
+@startuml profile_installation
+autonumber
+title §3.1.3.3 Profile Installation (SGP.22 v3.0)
+footer \n\nProfile Installation (SGP.22 v3.0)\n<:1f4cc:> https://www.linkedin.com/in/allanalfante/
+skinparam sequenceMessageAlign center
+skinparam ParticipantPadding 20
+skinparam BoxPadding 10
+skinparam SequenceGroupBorderColor #Navy
+
+'''
+'PARTICPANTS
+''''
+participant "Operator" as operator
+database "SM-DP+" as smdp
+participant "LPAd" as lpad
+participant "eUICC" as euicc
+
+hnote over lpad, euicc
+**Start condition:** The BPP has been downloaded to the LPA and all verifications by the LPA were successful.
+end note
+
+loop x N <font color=blue>"ES8+.InitialiseSecureChannel"</font>
+lpad -> euicc: <font color=magenta>"ES10b.LoadBoundProfilePackage"</font>\n x N <font color=blue>("ES8+.InitialiseSecureChannel")</font>
+rnote left #MOTIVATION
+InitialiseSecureChannelRequest ::= [35] SEQUENCE { 
+    remoteOpId RemoteOpId, 
+    transactionId [0] TransactionId,
+    controlRefTemplate[6] IMPLICIT ControlRefTemplate,
+    smdpOtpk [APPLICATION 73] OCTET STRING, 
+    smdpSign [APPLICATION 55] OCTET STRING 
+}
+ControlRefTemplate ::= SEQUENCE {
+    keyType [0] Octet1, 
+    keyLen [1] Octet1, 
+    hostId [4] Octet16 
+}
+end note
+note over euicc #Snow
+1. Verify InitialiseSecureChannel data
+2. Generate Session keys
+end note
+euicc --> lpad: Response APDU x N (90 00)
+end
+
+loop x N <font color=blue>"ES8+.ConfigureISDP"</font>
+  lpad -> euicc: <font color=magenta>"ES10b.LoadBoundProfilePackage"</font>\n x N <font color=blue>("ES8+.ConfigureISDP")</font>
+  rnote left #MOTIVATION
+  ConfigureISDPRequest ::= [36] SEQUENCE { 
+      dpProprietaryData [24] DpProprietaryData OPTIONAL 
+  }
+  DpProprietaryData ::= SEQUENCE { 
+      dpOid OBJECT IDENTIFIER 
+      -- additional data objects defined by the SM-DP+ MAY follow
+  }
+  end note
+  euicc --> lpad: Response 90 00
+end
+
+loop x N <font color=blue>"ES8+.StoreMetadata"</font>
+  lpad -> euicc: <font color=magenta>"ES10b.LoadBoundProfilePackage"</font>\n x N <font color=blue>("ES8+.StoreMetadata")</font>
+  rnote left #MOTIVATION
+  StoreMetadataRequest ::= [37] SEQUENCE { 
+      iccid Iccid,
+      serviceProviderName [17] UTF8String (SIZE(0..32)), 
+      profileName [18] UTF8String (SIZE(0..64)), 
+      iconType [19] IconType OPTIONAL, 
+      icon [20] OCTET STRING (SIZE(0..1024)) OPTIONAL, 
+      profileClass [21] ProfileClass DEFAULT operational,
+      notificationConfigurationInfo [22] SEQUENCE OF ... OPTIONAL,
+      profileOwner [23] OperatorId OPTIONAL,
+      profilePolicyRules [25] PprIds OPTIONAL,
+      serviceSpecificDataStoredInEuicc [34] VendorSpecificExtension OPTIONAL,
+      serviceSpecificDataNotStoredInEuicc [35] VendorSpecificExtension OPTIONAL,
+      rpmConfiguration [26] RpmConfiguration OPTIONAL, 
+      hriServerAddress [27] UTF8String OPTIONAL, 
+      serviceProviderMessage [30] LocalisedTextMessage OPTIONAL,
+      lprConfiguration [28] LprConfiguration OPTIONAL, 
+      enterpriseConfiguration [29] EnterpriseConfiguration OPTIONAL, 
+      serviceDescription [31] ServiceDescription OPTIONAL, 
+      deviceChangeConfiguration [32] DeviceChangeConfiguration OPTIONAL, 
+      estimatedProfileSize [33] INTEGER OPTIONAL 
+  }
+  NotificationEvent ::= BIT STRING {
+      notificationInstall(0),
+      notificationLocalEnable(1),
+      notificationLocalDisable(2),
+      notificationLocalDelete(3),
+      notificationRpmEnable(4), 
+      notificationRpmDisable(5), 
+      notificationRpmDelete(6), 
+      loadRpmPackageResult(7) 
+  }
+    NotificationConfigurationInformation ::= SEQUENCE {
+      profileManagementOperation NotificationEvent,
+      notificationAddress UTF8String 
+  }
+    ServiceDescription ::= BIT STRING { -- 1: service is on, 0: service is off
+      voice (0), 
+      data (1) 
+  }
+  end note
+  euicc --> lpad: Response 90 00
+end
+
+  note over euicc #Snow
+  1. Verify PPRs against RAT
+  2. Verify Enterprise Configuration
+  end note
+
+loop x N <font color=blue>"ES8+.ReplaceSessionKeys"</font>
+  lpad -> euicc: Call the <font color=magenta>"ES10b.LoadBoundProfilePackage"</font> function
+  rnote left #MOTIVATION
+  ReplaceSessionKeysRequest ::= [38] SEQUENCE { 
+      -- The new initial MAC chaining value
+      initialMacChainingValue OCTET STRING,
+      -- New session key value for encryption/decryption (PPK-ENC)
+      ppkEnc OCTET STRING,
+      -- New session key value of the 
+      -- session key C-MAC computation/verification (PPKMAC)
+      ppkCmac OCTET STRING
+  }
+  end note
+  euicc --> lpad: Response 90 00
+end
+
+loop x N <font color=blue>"ES8+.LoadProfileElements"</font>
+  lpad -> euicc: Call the <font color=magenta>"ES10b.LoadBoundProfilePackage"</font> function
+  euicc --> lpad: ProfileInstallationResult
+  rnote right #MOTIVATION
+  ProfileInstallationResult ::= [55] SEQUENCE {
+      profileInstallationResultData ProfileInstallationResultData,
+      euiccSignPIR EuiccSign
+  }
+  ProfileInstallationResultData ::= [39] SEQUENCE { -- Tag 'BF27'
+      transactionId [0] TransactionId, 
+      notificationMetadata [47] NotificationMetadata,
+      smdpOid OBJECT IDENTIFIER, 
+      finalResult [2] CHOICE {
+          successResult SuccessResult,
+          errorResult ErrorResult
+      }
+  }
+  NotificationMetadata ::= [47] SEQUENCE { -- Tag 'BF2F'
+      seqNumber [0] INTEGER,
+      profileManagementOperation [1] NotificationEvent,       
+      notificationAddress UTF8String, 
+      iccid Iccid OPTIONAL
+  }
+  NotificationEvent ::= BIT STRING {
+      -- Only one bit SHALL be set to 1
+      notificationInstall(0),
+      notificationLocalEnable(1),
+      notificationLocalDisable(2),
+      notificationLocalDelete(3),
+      notificationRpmEnable(4), 
+      notificationRpmDisable(5), 
+      notificationRpmDelete(6), 
+      loadRpmPackageResult(7) -
+  }
+  SuccessResult ::= SEQUENCE {
+      aid [APPLICATION 15] OCTET STRING (SIZE (5..16)), 
+      ppiResponse OCTET STRING 
+  }
+  end note
+end
+
+lpad -> smdp: Sends <font color=magenta>"ES9+.HandleNotification"</font> function\n(The function has no response)
+rnote right #MOTIVATION
+HandleNotification ::= [61] SEQUENCE {
+    pendingNotification PendingNotification
+}
+PendingNotification ::= CHOICE {
+    profileInstallationResult [55] **ProfileInstallationResult**,
+    otherSignedNotification OtherSignedNotification,
+    loadRpmPackageResultSigned [1] LoadRpmPackageResultSigned
+}
+ProfileInstallationResult ::= [55] SEQUENCE { 
+    profileInstallationResultData **ProfileInstallationResultData**,
+    euiccSignPIR EuiccSign
+}
+ProfileInstallationResultData ::= [39] SEQUENCE {
+    transactionId [0] TransactionId,
+    notificationMetadata [47] **NotificationMetadata**,
+    smdpOid OBJECT IDENTIFIER,
+    finalResult [2] CHOICE {
+        successResult SuccessResult,
+        errorResult ErrorResult
+    }
+}
+<color:blue>NotificationMetadata ::= [47] SEQUENCE { -- Tag 'BF2F'
+    seqNumber [0] INTEGER,
+    profileManagementOperation [1] **NotificationEvent**,
+    **notificationAddress** UTF8String, 
+    <color:blue>iccid **Iccid** OPTIONAL
+}
+**NotificationEvent** ::= BIT STRING {
+    -- Only one bit SHALL be set to 1
+    <font color=red>**notificationInstall**(0)</font>,
+    notificationLocalEnable(1),
+    notificationLocalDisable(2),
+    notificationLocalDelete(3),
+    notificationRpmEnable(4), 
+    notificationRpmDisable(5), 
+    notificationRpmDelete(6), 
+    loadRpmPackageResult(7) -
+}
+SuccessResult ::= SEQUENCE {
+    aid [APPLICATION 15] OCTET STRING (SIZE (5..16)), 
+    ppiResponse OCTET STRING 
+}
+end note
+
+smdp -> operator: Sends <font color=magenta>"ES2+.HandleNotification"</font> function\n(eid, iccid, notificationEvent = 4 BPP installation)
+rnote right #MOTIVATION
+eid
+iccid
+matchingId --v3.0
+notificationReceiverIdentifier --v3.0
+notificationIdentifier --v3.0
+profileType
+timestamp
+notificationEvent / notificationPointId --v2.5
+notificationEventStatus / notificationPointStatus --v2.5
+resultData
+end note
+
+note over operator
+What is performed by the Operator receiving this
+notification is out of scope of this specification.
+
+It is possible to insert this info into a table 
+in the OEM backend.
+end note
+
+hnote over operator, euicc
+Next RSP session follows (e.g., Enable Profile)
+end note
+
+@enduml

@@ -1,0 +1,85 @@
+@startuml list_profile
+autonumber
+title §3.2.4 List Profile (SGP.22 v3.0)
+footer \n\n§3.2.4 List Profile (SGP.22 v3.0)\n<:1f4cc:> https://www.linkedin.com/in/allanalfante/
+skinparam sequenceMessageAlign center
+skinparam ParticipantPadding 20
+skinparam BoxPadding 10
+skinparam SequenceGroupBorderColor #Navy
+
+'''
+'PARTICPANTS
+''''
+actor "End User" as user
+box "Device" #WhiteSmoke
+  participant "LUId" as luid
+  participant "eUICC\nLPA Services (ISD-R)" as services
+end box
+
+'''
+'CALL FLOW
+''''
+note over user, luid #Snow
+End User sees options for installed Profiles.
+end note
+
+luid -> services: Call the <font color=magenta>"ES10c.GetProfilesInfo"</font> function
+  rnote left #Motivation
+  ProfileInfoListRequest ::= [45] SEQUENCE {
+    searchCriteria [0] CHOICE {
+        isdpAid [APPLICATION 15] OctetTo16, 
+        iccid Iccid, 
+        profileClass [21] ProfileClass
+    } OPTIONAL,
+    tagList [APPLICATION 28] OCTET STRING OPTIONAL 
+}
+  end note
+
+services --> luid: Sends <font color=magenta>"ES10c.GetProfilesInfo"</font> response
+rnote right #Motivation
+ProfileInfoListResponse ::= [45] CHOICE {
+    profileInfoListOk SEQUENCE OF **ProfileInfo**,
+    profileInfoListError ProfileInfoListError
+}
+
+**ProfileInfo** ::= [PRIVATE 3] SEQUENCE {
+    iccid **Iccid** OPTIONAL,
+    isdpAid [APPLICATION 15] OctetTo16 OPTIONAL, 
+    profileState [112] **ProfileState** OPTIONAL,
+    profileNickname [16] UTF8String (SIZE(0..64)) OPTIONAL,
+    serviceProviderName [17] UTF8String (SIZE(0..32)) OPTIONAL,
+    profileName [18] UTF8String (SIZE(0..64)) OPTIONAL,
+    iconType [19] IconType OPTIONAL,
+    icon [20] OCTET STRING (SIZE(0..1024)) OPTIONAL,
+    profileClass [21] **ProfileClass** OPTIONAL,
+    notificationConfigurationInfo [22] SEQUENCE OF ... OPTIONAL,
+    **profileOwner** [23] OperatorId OPTIONAL,
+    dpProprietaryData [24] DpProprietaryData OPTIONAL,
+    **profilePolicyRules** [25] PprIds OPTIONAL,
+    serviceSpecificDataStoredInEuicc [34] VendorSpecificExtension OPTIONAL,
+    rpmConfiguration [26] RpmConfiguration OPTIONAL,
+    hriServerAddress [27] UTF8String OPTIONAL,
+    lprConfiguration [28] LprConfiguration OPTIONAL,
+    enterpriseConfiguration [29] EnterpriseConfiguration OPTIONAL,
+    serviceDescription [31] ServiceDescription OPTIONAL,
+    deviceChangeConfiguration [32] DeviceChangeConfiguration OPTIONAL,
+    enabledOnEsimPort [36] INTEGER OPTIONAL,
+    profileSize [37] INTEGER OPTIONAL
+}
+
+IconType ::= INTEGER {jpg(0), png(1)}
+**ProfileState ::= INTEGER {disabled(0), enabled(1)}**
+**ProfileClass ::= INTEGER {test(0), provisioning(1), operational(2)}**
+ProfileInfoListError ::= INTEGER {
+    incorrectInputValues(1),
+    profileChangeOngoing (11),
+    undefinedError(127)
+}
+end note
+
+luid --> user: Display list
+note over user, luid #Snow
+The LUId SHALL display a subset of the set of installed Profiles along with 
+their current states (Enabled or Disabled) to the End User in human readable format.
+end note
+@enduml

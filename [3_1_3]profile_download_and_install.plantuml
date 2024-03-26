@@ -1,0 +1,427 @@
+@startuml prof_dload_install_postive
+autonumber
+'hide footbox
+title §3.1.3 Profile Download and Installation (SGP.22 v3.0)
+footer \n\n§3.1.3 Profile Download and Installation - POSITIVE (SGP.22 v3.0)\n<:1f4cc:> https://www.linkedin.com/in/allanalfante/
+skinparam sequenceMessageAlign center
+skinparam ParticipantPadding 20
+skinparam BoxPadding 10
+skinparam SequenceGroupBorderColor #Navy
+
+'''
+'PARTICPANTS
+''''
+actor "End-User" as user
+participant "Operator" as operator
+database "SM-DP+" as smdp
+participant "LPAd" as lpad
+participant "eUICC" as euicc
+
+user -> lpad: Send **Activation Code** via manual typing and QR code scanning
+
+rnote over user, lpad #Snow
+The §4.1 **Activation Code** SHALL be coded to be the concatenation of the strings listed in the following table:
+<#lightblue,#black>|=  Name  |=  Description  |=  MOC  |
+<#white>|  AC_Format  |  Format of the Activation Code. SHALL be set to "1"  |  M  |
+<#gainsboro>|  Delimiter  |  SHALL be set to "$"  |  M  |
+<#white>|  <font color=red>SM-DP+</font>  |  FQDN of the SM-DP+  |  M  |
+<#gainsboro>|  Delimiter  |  SHALL be set to "$"  |  M  |
+<#white>|  AC_Token  |  <font color=red>matchingId</font> (§4.1.1)  |  M  |
+<#gainsboro>|  Delimiter  |  SHALL be set to "$"  |  C  |
+<#white>|  SM-DP+ OID  |  SM-DP+ OID in the CERT.DPauth.SIG (§4.5.1)\n  Certificate of the SM-DP+ used to verify an\n  SM-DP+ signature for its authentication (Annex K)\n  e.g., 1.3.6.1.4.1.31746  |  O  |
+<#gainsboro>|  Delimiter  |  SHALL be set to "$"  |  C  |
+<#white>|  Confirmation Code\n  Required Flag  |  SHALL be present and set to "1" if Confirmation\n  Code is required;otherwise it SHALL be absent  |  O  |
+<#gainsboro>|  Delimiter  |  SHALL be set to "$"  |  C  |
+<#white>|  CI Public\n  Key Indicator  |  specifies an indicator of an eSIM CA RootCA\n  public key e.g., A14D8-971  |  O  |
+<#gainsboro>|  Delimiter  |  SHALL be set to "$"  |  C  |
+<#white>|  Delete Notification for\n  Device Change  |  specifies the Delete Notification for Device Change  |  O  |
+end note
+
+== Common Mutual Authentication Procedure (OperationType = profileDownload) ==
+
+lpad -> euicc: Calls the <font color=magenta>"ES10b.GetEUICCInfo"</font> function
+rnote left #Motivation 
+GetEuiccInfo1Request ::= SEQUENCE {}
+end note
+
+euicc --> lpad: Sends <font color=magenta>"ES10b.GetEUICCInfo"</font> response
+rnote right #Motivation
+**EUICCInfo1** ::= [32] SEQUENCE {
+    lowestSvn [2] VersionType,
+    euiccCiPKIdListForVerification [9],
+    euiccCiPKIdListForSigning [10],
+    euiccCiPKIdListForSigningV3 [17] OPTIONAL,
+    euiccRspCapability [8] EuiccRspCapability OPTIONAL,
+    highestSvn [19] VersionType OPTIONAL
+}
+end note
+
+lpad -> euicc: Calls <font color=magenta>"ES10b.GetEUICCChallenge"</font> request
+rnote left #Motivation
+GetEuiccChallengeRequest ::= SEQUENCE {}
+end note
+
+euicc --> lpad: Sends <font color=magenta>"ES10b.GetEUICCChallenge"</font> response
+rnote right #Motivation
+GetEuiccChallengeResponse ::= SEQUENCE {
+    euiccChallenge OCTET STRING (SIZE(16))
+}
+end note
+
+lpad -> smdp: <font color=red>Activation Code contains SM-DP+ address</font>\nEstablish HTTPS connection.\nPerform a new key exchange.\nVerify TLS certificate.
+
+lpad -> smdp: Calls the <font color=magenta>"ES9+.InitiateAuthentication"</font> request
+rnote right #Motivation
+InitiateAuthenticationRequest ::= [57] SEQUENCE {
+  euiccChallenge [1] Octet16,
+  **smdpAddress** [3] UTF8String,
+  euiccInfo1 **EUICCInfo1**,
+  lpaRspCapability LpaRspCapability OPTIONAL
+}
+end note
+
+smdp --> lpad: Sends <font color=magenta>"ES9+.InitiateAuthentication"</font> response.
+  rnote left #Motivation
+  InitiateAuthenticationResponse ::= [57] **CHOICE** { 
+      initiateAuthenticationOk InitiateAuthenticationOkEs9,
+      initiateAuthenticateError INTEGER {      
+      },
+  }
+  InitiateAuthenticationOkEs9 ::= SEQUENCE {
+      **transactionId** [0] TransactionId,
+      serverSigned1 **ServerSigned1**,
+      serverSignature1 [APPLICATION 55] OCTET STRING,
+      euiccCiPKIdToBeUsed SubjectKeyIdentifier OPTIONAL, 
+      serverCertificate Certificate,
+      otherCertsInChain [1] CertificateChain OPTIONAL, 
+      crlList [2] SEQUENCE OF CertificateList OPTIONAL 
+  }
+  **ServerSigned1** ::= SEQUENCE {
+    transactionId TransactionId,
+    euiccChallenge Octet16,
+    serverAddress UTF8String,
+    serverChallenge Octet16,
+    sessionContext SessionContext OPTIONAL, 
+    serverRspCapability ServerRspCapability OPTIONAL 
+  }
+  end note
+
+lpad -> euicc: Calls the <font color=magenta>"ES10b.AuthenticateServer"</font> request
+rnote left #Motivation
+AuthenticateServerRequest ::= [56] SEQUENCE { 
+    serverSigned1 **ServerSigned1**, 
+    serverSignature1 [APPLICATION 55] OCTET STRING, 
+    euiccCiPKIdToBeUsed SubjectKeyIdentifier OPTIONAL, 
+    serverCertificate Certificate,
+    ctxParams1 **CtxParams1**,
+    otherCertsInChain [1] CertificateChain OPTIONAL, 
+    crlList [2] SEQUENCE OF CertificateList OPTIONAL 
+}
+**ServerSigned1** ::= SEQUENCE {
+    transactionId [0] TransactionId, 
+    euiccChallenge [1] Octet16, 
+    serverAddress [3] UTF8String, 
+    serverChallenge [4] Octet16, 
+    sessionContext [5] SessionContext OPTIONAL, 
+    serverRspCapability [6] ServerRspCapability OPTIONAL 
+}
+**CtxParams1** ::= **CHOICE** {
+    ctxParamsForCommonAuthentication[0] **CtxParamsForCommonAuthentication**,
+    ctxParamsForDeviceChange [1] CtxParamsForDeviceChange,
+    ctxParamsForProfileRecovery [2] CtxParamsForProfileRecovery,
+    ctxParamsForPushServiceRegistration [3] CtxParamsForPushServiceRegistration 
+}
+**CtxParamsForCommonAuthentication** ::= SEQUENCE {
+    **matchingId** [0] UTF8String OPTIONAL, 
+    deviceInfo [1] <font color=red>**DeviceInfo**</font>, 
+    operationType [2] **OperationType** DEFAULT {profileDownload}, 
+    iccid Iccid OPTIONAL, 
+    matchingIdSource [3] MatchingIdSource OPTIONAL, 
+    vendorSpecificExtension [4] VendorSpecificExtension OPTIONAL 
+}
+MatchingIdSource ::= CHOICE {
+    none [0] NULL,
+    activationCode [1] NULL,
+    smdsOid [2] OBJECT IDENTIFIER
+}
+**OperationType** ::= BIT STRING {
+    **profileDownload(0)**,
+    rpm(1)
+}
+**DeviceInfo** ::= SEQUENCE {
+    tac Octet4,
+    deviceCapabilities **DeviceCapabilities**,
+    imei Octet8 OPTIONAL,
+    preferredLanguages SEQUENCE OF UTF8String OPTIONAL, 
+    deviceTestMode NULL OPTIONAL, 
+    lpaRspCapability LpaRspCapability OPTIONAL
+}
+**DeviceCapabilities** ::= SEQUENCE {
+    gsmSupportedRelease VersionType OPTIONAL,
+    utranSupportedRelease VersionType OPTIONAL,
+    cdma2000onexSupportedRelease VersionType OPTIONAL,
+    cdma2000hrpdSupportedRelease VersionType OPTIONAL,
+    cdma2000ehrpdSupportedRelease VersionType OPTIONAL,
+    eutranEpcSupportedRelease VersionType OPTIONAL,
+    contactlessSupportedRelease VersionType OPTIONAL,
+    rspCrlSupportedVersion VersionType OPTIONAL, 
+    nrEpcSupportedRelease VersionType OPTIONAL, 
+    nr5gcSupportedRelease VersionType OPTIONAL, 
+    eutran5gcSupportedRelease VersionType OPTIONAL,
+    lpaSvn VersionType OPTIONAL,
+    catSupportedClasses CatSupportedClasses OPTIONAL,
+    euiccFormFactorType EuiccFormFactorType OPTIONAL
+}
+end note
+
+euicc --> lpad: Sends <font color=magenta>"ES10b.AuthenticateServer"</font> response
+rnote right #Motivation
+**AuthenticateServerResponse** ::= [56] **CHOICE** {
+  authenticateResponseOk [0] **AuthenticateResponseOk**,
+}
+AuthenticateResponseOk ::= SEQUENCE {
+  euiccSigned1 **EuiccSigned1**,
+  euiccSignature1 [APPLICATION 55] OCTET STRING, 
+  euiccCertificate Certificate, 
+  nextCertInChain Certificate, 
+  otherCertsInChain [0]  CertificateChain OPTIONAL 
+}
+**EuiccSigned1** ::= SEQUENCE {
+  transactionId [0] TransactionId,
+  serverAddress [3] UTF8String,
+  serverChallenge [4] Octet16,
+  euiccInfo2[34] <font color=red>**EUICCInfo2**</font>,
+  ctxParams1 **CtxParams1**
+}
+**EUICCInfo2** ::= [34] SEQUENCE { 
+    baseProfilePackageVersion [1] VersionType, 
+    lowestSvn [2] VersionType,
+    euiccFirmwareVersion [3] VersionType, 
+    extCardResource [4] OCTET STRING, 
+    uiccCapability [5] UICCCapability,
+    ts102241Version [6] VersionType OPTIONAL,
+    globalplatformVersion [7] VersionType OPTIONAL, 
+    euiccRspCapability [8] EuiccRspCapability,
+    euiccCiPKIdListForVerification [9] SEQUENCE OF SubjectKeyIdentifier, 
+    euiccCiPKIdListForSigning [10] SEQUENCE OF SubjectKeyIdentifier, 
+    euiccCategory [11] INTEGER {
+        other(0),
+        basicEuicc(1),
+        mediumEuicc(2),
+        contactlessEuicc(3)
+    } OPTIONAL, 
+    forbiddenProfilePolicyRules [25] PprIds OPTIONAL, 
+    ppVersion VersionType, 
+    sasAcreditationNumber UTF8String (SIZE(0..64)),
+    certificationDataObject [12] CertificationDataObject OPTIONAL, 
+    treProperties [13] BIT STRING {
+        isDiscrete(0),
+        isIntegrated(1),
+        usesRemoteMemory(2) 
+    } OPTIONAL, 
+    treProductReference [14] UTF8String OPTIONAL, 
+    Platform_Label as defined in GlobalPlatform DLOA specification [57],
+    additionalProfilePackageVersions [15] SEQUENCE OF VersionType OPTIONAL, 
+    lpaMode [16] LpaMode OPTIONAL, 
+    euiccCiPKIdListForSigningV3 [17] SEQUENCE OF SubjectKeyIdentifier OPTIONAL, 
+    additionalEuiccInfo [18] OCTET STRING (SIZE(0..32)) OPTIONAL, 
+    highestSvn [19] VersionType OPTIONAL 
+}
+end note  
+
+lpad -[#Blue]> smdp: Calls the <font color=magenta>"ES9+.AuthenticateClient"</font> request
+rnote right #MOTIVATION
+AuthenticateClientRequest ::= [59] SEQUENCE { 
+    transactionId [0] TransactionId,
+    authenticateServerResponse [56] **AuthenticateServerResponse**, 
+    deleteNotificationForDc [1] DeleteNotificationForDc 
+}
+end note
+
+==End Common Mutual Authentication Procedure specific to this flow== 
+
+smdp -> smdp: Verify
+note right #Snow
+Verify the following:
+1. Is the matchingId has pending Profile download order?
+2. Is Profile download order already linked to an EID?
+3. Is Profile for download in 'Released' state? -- after ES2+.ReleaseProfile
+4. If retry, is it in 'Downloaded' state?
+end note
+
+smdp -> smdp: Increment the count\nof download attempts
+smdp -> smdp: Perform <font color=red>eligibility check</font> using\n**Device Info** and **euiccInfo2**
+smdp -> smdp: Check, determine and generate
+note right #Snow
+Check, determine and generate:
+1. Is **Confirmation Code** reqd? (check flag - see table above)
+2. Generate an **smdpSigned2**
+3. Compute the smdpSignature2
+4. Generate the Profile Metadata of the Profile
+end note
+
+smdp -[#Blue]-> lpad: Sends <font color=magenta>"ES9+.AuthenticateClient"</font> response
+rnote left #Motivation 
+AuthenticateClientResponseEs9 ::= [59] **CHOICE** {
+    authenticateClientOk **AuthenticateClientOk**,
+    authenticateClientError INTEGER {
+    },
+    authenticateClientOkRpm AuthenticateClientOkRpm, 
+    authenticateClientOkDeviceChange AuthenticateClientOkDeviceChange 
+}
+  **AuthenticateClientOk** ::= SEQUENCE {
+    transactionId [0] **TransactionId**,
+    profileMetadata [37] **StoreMetadataRequest** OPTIONAL,
+    smdpSigned2 [1] **SmdpSigned2** OPTIONAL, 
+    smdpSignature2 [APPLICATION 55] OCTET STRING OPTIONAL, 
+    smdpCertificate Certificate 
+}
+StoreMetadataRequest ::= [37] SEQUENCE {
+    iccid **Iccid**,
+    serviceProviderName [17] UTF8String (SIZE(0..32)), 
+    **profileName** [18] UTF8String (SIZE(0..64)), 
+    iconType [19] IconType OPTIONAL,
+    icon [20] OCTET STRING (SIZE(0..1024)) OPTIONAL,
+    profileClass [21] ProfileClass DEFAULT operational,
+    notificationConfigurationInfo [22] SEQUENCE OF... OPTIONAL,
+    profileOwner [23] OperatorId OPTIONAL, 
+    profilePolicyRules [25] **PprIds** OPTIONAL, 
+    serviceSpecificDataStoredInEuicc [34] VendorSpecificExtension OPTIONAL,
+    serviceSpecificDataNotStoredInEuicc [35] VendorSpecificExtension OPTIONAL,
+    rpmConfiguration [26] RpmConfiguration OPTIONAL,
+    hriServerAddress [27] UTF8String OPTIONAL,
+    serviceProviderMessage [30] LocalisedTextMessage OPTIONAL,
+    lprConfiguration [28] **LprConfiguration** OPTIONAL,
+    enterpriseConfiguration [29] **EnterpriseConfiguration** OPTIONAL,
+    serviceDescription [31] ServiceDescription OPTIONAL,
+    deviceChangeConfiguration [32] DeviceChangeConfiguration OPTIONAL,
+    estimatedProfileSize [33] INTEGER OPTIONAL
+}
+SmdpSigned2 ::= SEQUENCE {
+    transactionId [0] TransactionId,
+    **ccRequiredFlag** BOOLEAN,
+    bppEuiccOtpk [APPLICATION 73] OCTET STRING OPTIONAL, 
+    **rpmPending** NULL OPTIONAL
+}
+PprIds ::= BIT STRING { 
+    pprUpdateControl(0), -- defines how to update PPRs via ES6
+    ppr1(1), -- Disabling not allowed'
+    ppr2(2) -- 'Deletion not allowed'
+}
+EnterpriseConfiguration ::= SEQUENCE {
+    enterpriseOid [0] OBJECT IDENTIFIER,
+    enterpriseName [1] UTF8String (SIZE(0..64)),
+    **enterpriseRules** [2] SEQUENCE {
+        enterpriseRuleBits [0] BIT STRING {
+            referenceEnterpriseRule (0),
+            priorityEnterpriseProfile (1),
+            onlyEnterpriseProfilesCanBeInstalled (2)
+        },
+        numberOfNonEnterpriseProfiles [1] INTEGER -- that can be Enabled
+    } OPTIONAL
+}
+end note
+
+note over lpad #Snow
+1. **Check if the profile can be installed (Annex F. Eligibility check)**
+2. Get Rules Authorisation Table (RAT).
+3. Get list of installed Profiles.
+end note
+
+
+lpad -> euicc: Call the <font color=magenta>"ES10b.GetRAT"</font> request
+  rnote left #Motivation 
+GetRatRequest ::= [67] SEQUENCE { -- Tag 'BF43'
+  -- No input data  
+}
+  end note
+
+euicc --> lpad: Sends <font color=magenta>"ES10b.GetRAT"</font> response
+  rnote right #Motivation 
+GetRatResponse ::= [67] SEQUENCE { 
+  rat **RulesAuthorisationTable**
+}
+**RulesAuthorisationTable** ::= SEQUENCE OF ProfilePolicyAuthorisationRule
+ProfilePolicyAuthorisationRule ::= SEQUENCE {
+  pprIds **PprIds**,
+  allowedOperators SEQUENCE OF OperatorId,
+  pprFlags BIT STRING {**consentRequired**(0)}
+}
+  end note
+
+lpad -> euicc: Call the <font color=magenta>"ES10c.GetProfilesInfo"</font> request
+rnote left #Motivation 
+ProfileInfoListRequest ::= [45] SEQUENCE { 
+  searchCriteria [0] CHOICE {
+    isdpAid [APPLICATION 15] OctetTo16, 
+    iccid Iccid, 
+    profileClass [21] ProfileClass 
+  } OPTIONAL,
+  **tagList** [APPLICATION 28] OCTET STRING OPTIONAL
+}
+ end note
+
+euicc --> lpad: Sends <font color=magenta>"ES10c.GetProfilesInfo"</font> response
+rnote right #Motivation 
+-- Definition of ProfileInfoListResponse
+ProfileInfoListResponse ::= [45] **CHOICE** {
+  profileInfoListOk SEQUENCE OF **ProfileInfo**,
+  profileInfoListError ProfileInfoListError
+}
+**ProfileInfo** ::= [PRIVATE 3] SEQUENCE { 
+    iccid **Iccid** OPTIONAL,
+    isdpAid [APPLICATION 15] OctetTo16 OPTIONAL, 
+    profileState [112] **ProfileState** OPTIONAL,
+    profileNickname [16] UTF8String (SIZE(0..64)) OPTIONAL,
+    serviceProviderName [17] UTF8String (SIZE(0..32)) OPTIONAL, 
+    profileName [18] UTF8String (SIZE(0..64)) OPTIONAL,
+    iconType [19] IconType OPTIONAL,
+    icon [20] OCTET STRING (SIZE(0..1024)) OPTIONAL,
+    profileClass [21] **ProfileClass** OPTIONAL,
+    notificationConfigurationInfo [22] SEQUENCE OF ... OPTIONAL,
+    profileOwner [23] OperatorId OPTIONAL,
+    dpProprietaryData [24] DpProprietaryData OPTIONAL,
+    profilePolicyRules [25] **PprIds** OPTIONAL,
+    serviceSpecificDataStoredInEuicc [34] VendorSpecificExtension OPTIONAL, 
+    rpmConfiguration [26] **RpmConfiguration** OPTIONAL, 
+    hriServerAddress [27] UTF8String OPTIONAL, 
+    lprConfiguration [28] LprConfiguration OPTIONAL, 
+    enterpriseConfiguration [29] **EnterpriseConfiguration** OPTIONAL, 
+    serviceDescription [31] ServiceDescription OPTIONAL,
+    deviceChangeConfiguration [32] DeviceChangeConfiguration OPTIONAL, 
+    enabledOnEsimPort [36] INTEGER OPTIONAL,
+    **profileSize** [37] INTEGER OPTIONAL 
+}
+IconType ::= INTEGER {jpg(0), png(1)}
+**ProfileState** ::= INTEGER {disabled(0), enabled(1)}
+**ProfileClass** ::= INTEGER {<font color=red>test(0), provisioning(1), operational(2)</font>}
+**PprIds** ::= BIT STRING { 
+    pprUpdateControl(0), -- defines how to update PPRs via ES6
+    ppr1(1), -- Disabling not allowed'
+    ppr2(2) -- 'Deletion not allowed'
+}
+RpmConfiguration ::= SEQUENCE { 
+    managingDpList [0] SEQUENCE OF SEQUENCE {
+        managingDpOid [0] OBJECT IDENTIFIER,
+        rpmType [1] **RpmType** OPTIONAL,
+        tagList [APPLICATION 28] OCTET STRING OPTIONAL
+    },
+    pollingAddress [1] UTF8String OPTIONAL, 
+    allowedCiPKId [2] SubjectKeyIdentifier OPTIONAL, 
+    profileOwnerOid [3] OBJECT IDENTIFIER
+}
+**RpmType** ::= BIT STRING {
+    enable (0),
+    disable (1),
+    delete (2),
+    listProfileInfo (3),
+    contactPcmp (4)
+}
+end note
+
+lpad -> user:  Obtains End User (pprFlags) consent with Optional **Confirmation Code** input\nIf CC is not required, LPAd shall ask for Simple Confirmation (Yes, No, Not Now)\n by showing the ProfileName or any relevant info contained in the Profile Metadata
+
+hnote over user, euicc
+Proceed to §3.1.3.2 Sub-procedure Profile Download and Installation – Download Confirmation
+end note
+@enduml

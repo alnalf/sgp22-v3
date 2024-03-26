@@ -1,0 +1,329 @@
+@startuml rpm_download
+autonumber
+title §3.7.2 RPM Download (SGP.22 v3.0)
+footer \n\n§3.7.2 RPM Download (SGP.22 v3.0)\n<:1f4cc:> https://www.linkedin.com/in/allanalfante/
+skinparam sequenceMessageAlign center
+skinparam ParticipantPadding 20
+skinparam BoxPadding 10
+skinparam SequenceGroupBorderColor #Navy
+
+'''
+'PARTICPANTS
+''''
+participant "Operator" as operator
+database "SM-DP+" as smdp
+box "Device" #WhiteSmoke
+  participant "LPAd" as lpad
+  participant "eUICC" as euicc
+end box
+
+'''
+'CALL FLOW
+''''
+
+note over lpad #Snow
+LPAD to retrieve **SM-DP+ address** from either SM-DS, eUICC or Polling
+Address and allowed eSIM CA RootCA Public Key identifier
+end note
+
+== Start of §3.0.1 Common Mutual Authentication Procedure (SM-DP+ specific)  ==
+
+opt In case, LPAd does not have eUICCInfo yet
+lpad -> euicc: Calls the <font color=magenta>"ES10b.GetEUICCInfo"</font> function
+  rnote left #Motivation 
+  GetEuiccInfo1Request ::= SEQUENCE {}
+  end note
+
+euicc --> lpad: Returns the euiccInfo1
+rnote right #Motivation
+**EUICCInfo1** ::= [32] SEQUENCE {
+    lowestSvn [2] VersionType,
+    euiccCiPKIdListForVerification [9],
+    euiccCiPKIdListForSigning [10],
+    euiccCiPKIdListForSigningV3 [17]OPTIONAL,
+    euiccRspCapability [8] **EuiccRspCapability** OPTIONAL,
+    highestSvn [19] VersionType OPTIONAL
+}
+**EuiccRspCapability** ::= BIT STRING {
+    additionalProfile(0),
+    loadCrlSupport(1),
+    **rpmSupport**(2),
+    testProfileSupport(3),
+    deviceInfoExtensibilitySupport(4),                                      
+    serviceSpecificDataSupport(5),                                     
+    hriServerAddressSupport(6),
+    serviceProviderMessageSupport(7),
+    lpaProxySupport(8),
+    enterpriseProfilesSupport(9),
+    serviceDescriptionSupport(10),
+    deviceChangeSupport(11),
+    encryptedDeviceChangeDataSupport(12),
+    estimatedProfileSizeIndicationSupport(13),
+    profileSizeInProfilesInfoSupport(14),
+    crlStaplingV3Support(15),
+    certChainV3VerificationSupport(16),
+    signedSmdsResponseV3Support(17),
+    euiccRspCapInInfo1(18),
+    osUpdateSupport(19),
+    cancelForEmptySpnPnSupport(20),
+    updateNotifConfigInfoSupport(21),
+    updateMetadataV3Support(22)                             
+}
+end note
+end
+
+lpad -> lpad: remove all public key identifiers that do not match\neSIM CA RootCA public key identifier
+
+lpad -> euicc: Calls the <font color=magenta>"ES10b.GetEUICCChallenge"</font> function
+  rnote left #Motivation
+    GetEuiccChallengeRequest ::= SEQUENCE {}
+  end note
+
+euicc --> lpad: Returns the eUICC Challenge
+  rnote right #Motivation
+    GetEuiccChallengeResponse ::= SEQUENCE {
+        euiccChallenge OCTET STRING (SIZE(16))
+    }
+  end note
+
+
+lpad -> smdp: Calls the <font color=magenta>"ES9+.InitiateAuthentication"</font> function
+rnote right #Motivation
+  InitiateAuthenticationRequest ::= [57] SEQUENCE {
+    euiccChallenge [1] Octet16, 
+    smdpAddress [3] UTF8String,
+    euiccInfo1 **EUICCInfo1**,
+    lpaRspCapability LpaRspCapability OPTIONAL
+  }
+end note
+
+smdp --> lpad: Sends <font color=magenta>"ES9+.InitiateAuthentication"</font> response.
+rnote left #Motivation
+InitiateAuthenticationResponse ::= [57] CHOICE {
+    initiateAuthenticationOk InitiateAuthenticationOkEs9,
+}
+InitiateAuthenticationOkEs9 ::= SEQUENCE {
+    **transactionId** [0] TransactionId, 
+    serverSigned1 **ServerSigned1**, 
+    serverSignature1 [APPLICATION 55] OCTET STRING, 
+    euiccCiPKIdToBeUsed SubjectKeyIdentifier OPTIONAL, 
+    serverCertificate Certificate,
+    otherCertsInChain [1] CertificateChain OPTIONAL, 
+    crlList [2] SEQUENCE OF CertificateList OPTIONAL 
+}
+**ServerSigned1** ::= SEQUENCE {
+  transactionId TransactionId,
+  euiccChallenge Octet16,
+  serverAddress UTF8String,
+  serverChallenge Octet16,
+  sessionContext SessionContext OPTIONAL, 
+  serverRspCapability ServerRspCapability OPTIONAL 
+}
+ServerRspCapability ::= BIT STRING {
+  crlStaplingV3Support (0),
+  eventListSigningV3Support (1),
+  pushServiceV3Support (2),
+  cancelForEmptySpnPnSupport (3)
+}
+end note
+
+lpad -> euicc: Calls the <font color=magenta>"ES10b.AuthenticateServer"</font> function.
+rnote left #Motivation
+AuthenticateServerRequest ::= [56] SEQUENCE { 
+    serverSigned1 **ServerSigned1**,
+    serverSignature1 [APPLICATION 55] OCTET STRING,
+    euiccCiPKIdToBeUsed SubjectKeyIdentifier OPTIONAL,
+    serverCertificate Certificate,
+    ctxParams1 **CtxParams1**,
+    otherCertsInChain [1] CertificateChain OPTIONAL,
+    crlList [2] SEQUENCE OF CertificateList OPTIONAL
+}
+**ServerSigned1** ::= SEQUENCE {
+    transactionId [0] TransactionId,
+    euiccChallenge [1] Octet16,
+    serverAddress [3] UTF8String,
+    serverChallenge [4] Octet16, 
+    sessionContext  [5] SessionContext OPTIONAL,
+    serverRspCapability [6] ServerRspCapability OPTIONAL
+}
+**CtxParams1** ::= CHOICE {
+    **ctxParamsForCommonAuthentication**  [0] CtxParamsForCommonAuthentication,
+    ctxParamsForDeviceChange [1] CtxParamsForDeviceChange,
+    ctxParamsForProfileRecovery  [2] CtxParamsForProfileRecovery,
+    ctxParamsForPushServiceRegistration [3] CtxParamsForPushServiceRegistration
+}
+CtxParamsForCommonAuthentication ::= SEQUENCE {
+    matchingId [0] UTF8String OPTIONAL,
+    deviceInfo [1] DeviceInfo, 
+    operationType  [2] **OperationType** DEFAULT {profileDownload}, 
+    iccid  Iccid OPTIONAL, 
+    matchingIdSource  [3] **MatchingIdSource** OPTIONAL, 
+    vendorSpecificExtension [4] VendorSpecificExtension OPTIONAL 
+}
+MatchingIdSource ::= CHOICE {
+    none [0] NULL,
+    activationCode [1] NULL,
+    smdsOid [2] OBJECT IDENTIFIER
+}
+**OperationType** ::= BIT STRING {
+    profileDownload(0),
+    **<font color=red>rpm</font>**(1)
+}
+SessionContext ::= SEQUENCE {
+    serverSvn  [0] VersionType,
+    crlStaplingV3Used  [1] BOOLEAN, 
+    euiccCiPKIdToBeUsedV3  [2] SubjectKeyIdentifier OPTIONAL,
+    supportedPushServices  [3] SEQUENCE OF OBJECT IDENTIFIER OPTIONAL
+}
+ServerRspCapability ::= BIT STRING {
+    crlStaplingV3Support (0),  
+    eventListSigningV3Support (1),
+    pushServiceV3Support (2),
+    cancelForEmptySpnPnSupport (3)
+}
+end note
+
+euicc --> lpad: Send <font color=magenta>"ES10b.AuthenticateServer"</font> response
+rnote right #Motivation
+AuthenticateServerResponse ::= [56] CHOICE {
+    **authenticateResponseOk** [0] AuthenticateResponseOk,
+    authenticateResponseError [1] AuthenticateResponseError
+}
+AuthenticateResponseOk ::= SEQUENCE {
+    euiccSigned1 EuiccSigned1,
+    euiccSignature1 [APPLICATION 55] OCTET STRING,
+    euiccCertificate Certificate, 
+    nextCertInChain Certificate, 
+    otherCertsInChain [0] CertificateChain OPTIONAL
+}
+EuiccSigned1 ::= SEQUENCE {
+    **transactionId** [0] TransactionId,
+    serverAddress [3] UTF8String,
+    serverChallenge [4] Octet16,
+    euiccInfo2 [34] EUICCInfo2,
+    ctxParams1 CtxParams1
+}
+end note
+
+lpad -[#Blue]> smdp: Calls the <font color=magenta>"ES9+.AuthenticateClient"</font> function
+rnote right #Motivation
+AuthenticateClientRequest ::= [59] SEQUENCE {
+    **transactionId** [0] TransactionId,
+    authenticateServerResponse [56] **AuthenticateServerResponse**
+    deleteNotificationForDc [1] DeleteNotificationForDc
+}
+end note
+
+==End==
+note over smdp #Snow
+SM-DP+ to look for pending RPM package. 
+If there is, verify if eUICC indicates **rpmSupport**. 
+
+**rpmSupport** is part of the EuiccRspCapability definition. 
+**EuiccRspCapability** is in the sequence of eUICCInfo1.
+**eUICCInfo1** is part of **"ES9+.InitiateAuthentication"** function.
+end note
+
+smdp <- smdp: Verify rpmSupport
+
+group Notify Operator (Asynchronously)
+  smdp -> operator: Calls the <font color=magenta>"ES2+.HandleNotification"</font> function
+    rnote right
+      POST /gsma/rsp3/es2plus/handleNotification HTTP/1.1
+      X-Admin-Protocol: gsma/rsp/v3.0.0
+      Content-Type: application/json;charset=UTF-8     
+      {
+        "header": {
+          "functionRequesterIdentifier": "RequesterID",
+          "functionCallIdentifier": "TX-571"
+        },
+        "eid": "98765432109876543210987654321098",
+        "iccid": "1234567890123456789F",
+        "matchingId": "AB3C9-K8H2M-Y1R7P-0Q5ZT",
+        "notificationReceiverIdentifier": "ReceiverID",
+        "notificationIdentifier": "NotificationID",
+        "profileType": "P9054-2",
+        "timestamp": "2023-09-07T14:30:00Z",
+        "**notificationEvent**": 1,
+        "notificationEventStatus": {
+          "status": "Executed-Success",
+          "statusCodeData": {
+            "subjectCode": "1.2.3",
+            "reasonCode": "4.5.6",
+            "subjectIdentifier": "SubjectID",
+            "message": "Notification executed successfully"
+          }
+        },
+        "resultData": "Base64EncodedData"
+      }
+    end note
+end
+
+smdp -[#Blue]-> lpad: Sends <font color=magenta>"ES9+.AuthenticateClient"</font> response
+'\n**<:rotating_light:> Download of RPM Package occurs here**
+rnote left #Motivation
+  AuthenticateClientResponseEs9 ::= [59] CHOICE { 
+      authenticateClientOk  AuthenticateClientOk,
+      authenticateClientError INTEGER,
+      authenticateClientOkRpm  **AuthenticateClientOkRpm**, 
+      authenticateClientOkDeviceChange  AuthenticateClientOkDeviceChange 
+  }
+  **AuthenticateClientOkRpm** ::= SEQUENCE {
+      transactionId  [0] **TransactionId**,
+      smdpSigned3  [3] **SmdpSigned3**,
+      smdpSignature3  [APPLICATION 55] OCTET STRING
+  }
+  **SmdpSigned3** ::= SEQUENCE {
+      transactionId [0] **TransactionId**, 
+      rpmPackage [1] **RpmPackage**,
+      **rpmPending** [2] NULL OPTIONAL
+  }
+  RpmPackage ::= SEQUENCE OF **RpmCommand**
+  **RpmCommand** ::= SEQUENCE {
+    continueOnFailure [0] NULL OPTIONAL,
+    **rpmCommandDetails** CHOICE {
+        **enable** [1] SEQUENCE { iccid [APPLICATION 26] Iccid },
+        **disable** [2] SEQUENCE { iccid [APPLICATION 26] Iccid },
+        **delete** [3] SEQUENCE { iccid [APPLICATION 26] Iccid },
+        **listProfileInfo** [4] ListProfileInfo,
+        updateMetadata [5] SEQUENCE {
+            iccid [APPLICATION 26] Iccid,
+            updateMetadataRequest **UpdateMetadataRequest**
+        },
+        contactPcmp [6] SEQUENCE {
+            iccid [APPLICATION 26] Iccid,
+            dpiRpm UTF8String OPTIONAL
+        }
+    }
+  }
+end note
+
+hnote over operator, euicc
+Optional: §3.0.2 Common Cancel Session Procedure
+to be continued... if RPM disabled, package contains unsupported command
+end note
+
+lpad -> euicc: Call <font color=magenta>"ES10c.GetProfilesInfo"</font> function
+euicc -> lpad: Sends <font color=magenta>"ES10c.GetProfilesInfo"</font> response.\n[ProfileInfoListOk]
+rnote right #MOTIVATION 
+ProfileInfo ::= [PRIVATE 3] SEQUENCE {
+    profilePolicyRules [25] **PprIds** OPTIONAL,
+}
+PprIds ::= BIT STRING {
+    pprUpdateControl (0), 
+    **ppr1** (1), -- 'Disabling not allowed'
+    **ppr2** (2) -- 'Deletion not allowed'
+}
+end note
+
+lpad <- lpad: Verify and\nGenerate Confirmation
+note over lpad #Snow
+1. Check RPM package against PPRs.
+2. Generate User Consent
+3. Ask for Confirmation for Delete, Disable, Enable, etc
+end note
+
+hnote over operator, euicc
+Proceed to continue to §3.7.3 RPM Execution
+end note
+@enduml

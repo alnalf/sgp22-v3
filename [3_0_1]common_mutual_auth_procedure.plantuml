@@ -1,0 +1,326 @@
+@startuml common_mutual_auth_procedure
+autonumber
+title §3.0.1 Common Mutual Authentication Procedure (SGP.22 v3.0)
+footer \n\n§3.0.1 Common Mutual Authentication Procedure (SGP.22 v3.0)\n<:1f4cc:> https://www.linkedin.com/in/allanalfante/
+skinparam sequenceMessageAlign center
+skinparam ParticipantPadding 20
+skinparam BoxPadding 10
+skinparam SequenceGroupBorderColor #Navy
+
+'''
+'PARTICPANTS
+''''
+actor "End-User" as user
+database "SM-xx" as smxx
+participant "LPAd" as lpad
+participant "eUICC" as euicc
+
+'''
+'CALL FLOW
+''''
+group#LightYellow In case LPAd does not have the euiccInfo1
+lpad -> euicc: Calls the <font color=magenta>"ES10b.GetEUICCInfo"</font> function
+rnote left #Motivation 
+GetEuiccInfo1Request ::= SEQUENCE {}
+--ADD THE EUICC2 HERE!
+end note
+
+euicc --> lpad: Sends <font color=magenta>"ES10b.GetEUICCInfo"</font> response
+rnote right #Motivation
+EUICCInfo1 ::= [32] SEQUENCE {
+    lowestSvn [2] VersionType,
+    **euiccCiPKIdListForVerification** [9],
+    euiccCiPKIdListForSigning [10],
+    euiccCiPKIdListForSigningV3 [17] OPTIONAL,
+    euiccRspCapability [8] EuiccRspCapability OPTIONAL,
+    highestSvn [19] VersionType OPTIONAL
+}
+--ADD THE EUICC2 HERE!
+end note
+end
+
+lpad <- lpad: remove all public key identifiers from\n **euiccCiPKIdListForVerification** that do not match\neSIM CA RootCA public key identifier
+
+lpad -> euicc: Calls <font color=magenta>"ES10b.GetEUICCChallenge"</font> request
+  rnote left #Motivation
+  GetEuiccChallengeRequest ::= SEQUENCE {}
+  end note
+
+euicc -> euicc: Generate an eUICC Challenge
+euicc --> lpad: Sends <font color=magenta>"ES10b.GetEUICCChallenge"</font> response
+  rnote right #Motivation
+  GetEuiccChallengeResponse ::= SEQUENCE {
+      euiccChallenge OCTET STRING (SIZE(16))
+  }
+  end note
+
+lpad -> smxx: Establish HTTPS connection.\nPerform a new key exchange.\nVerify TLS certificate.
+
+lpad -> smxx: Calls the <font color=magenta>"ES9+.InitiateAuthentication"</font> request\n(Same function is used for ES11.InitiateAuthentication)
+  rnote right #Motivation
+  InitiateAuthenticationRequest ::= [57] SEQUENCE {
+    euiccChallenge [1] Octet16,
+    **smdpAddress** [3] UTF8String,
+    euiccInfo1 **EUICCInfo1**,
+    lpaRspCapability LpaRspCapability OPTIONAL
+  }
+  end note
+
+smxx -> smxx: Verify **smdpAddress**\nand **euiccInfo1**
+
+group Valid for both SM-DP+ or SM-DS
+smxx --> lpad: Sends <font color=magenta>"ES9+.InitiateAuthentication"</font> response\n(Same function is used for ES11.InitiateAuthentication)
+rnote left #Motivation
+InitiateAuthenticationResponse ::= [57] CHOICE { 
+    initiateAuthenticationOk InitiateAuthenticationOkEs9,
+    initiateAuthenticateError INTEGER {      
+    },
+}
+InitiateAuthenticationOkEs9 ::= SEQUENCE {
+    **transactionId** [0] TransactionId,
+    serverSigned1 **ServerSigned1**,
+    serverSignature1 [APPLICATION 55] OCTET STRING,
+    euiccCiPKIdToBeUsed SubjectKeyIdentifier OPTIONAL, 
+    serverCertificate Certificate,
+    otherCertsInChain [1] CertificateChain OPTIONAL, 
+    crlList [2] SEQUENCE OF CertificateList OPTIONAL 
+}
+**ServerSigned1** ::= SEQUENCE {
+  transactionId TransactionId,
+  euiccChallenge Octet16,
+  serverAddress UTF8String,
+  serverChallenge Octet16,
+  sessionContext SessionContext OPTIONAL, 
+  serverRspCapability ServerRspCapability OPTIONAL 
+}
+ServerRspCapability ::= BIT STRING {
+  crlStaplingV3Support (0),
+  eventListSigningV3Support (1),
+  pushServiceV3Support (2),
+  cancelForEmptySpnPnSupport (3)
+}
+end note
+end
+
+lpad -> lpad: Verify
+  note right #Snow
+  Verify the following:
+  1. If SM-DP+, verify OID (//part of Activation Code//)
+  2. SM-XX Address (smxxAddress & serverSigned1)
+  3.  Subject Key Identifier of the eSIM RootCA
+  4. sessionContext
+  5. Generate ctxParams1 //depending on the requirement//
+  end note
+
+lpad -> euicc: Calls the <font color=magenta>"ES10b.AuthenticateServer"</font> request
+rnote left #Motivation
+AuthenticateServerRequest ::= [56] SEQUENCE { 
+    serverSigned1 ServerSigned1, 
+    serverSignature1 [APPLICATION 55] OCTET STRING, 
+    euiccCiPKIdToBeUsed SubjectKeyIdentifier OPTIONAL, 
+    serverCertificate Certificate, -
+    ctxParams1 CtxParams1,
+    otherCertsInChain [1] CertificateChain OPTIONAL, 
+    crlList [2] SEQUENCE OF CertificateList OPTIONAL 
+}
+ServerSigned1 ::= SEQUENCE {
+    transactionId [0] TransactionId, 
+    euiccChallenge [1] Octet16, 
+    serverAddress [3] UTF8String, 
+    serverChallenge [4] Octet16, 
+    sessionContext [5] SessionContext OPTIONAL, 
+    serverRspCapability [6] ServerRspCapability OPTIONAL 
+}
+CtxParams1 ::= CHOICE {
+    ctxParamsForCommonAuthentication[0] CtxParamsForCommonAuthentication,
+    ctxParamsForDeviceChange [1] CtxParamsForDeviceChange,
+    ctxParamsForProfileRecovery [2] CtxParamsForProfileRecovery,
+    ctxParamsForPushServiceRegistration [3] CtxParamsForPushServiceRegistration 
+}
+CtxParamsForCommonAuthentication ::= SEQUENCE {
+    matchingId [0] UTF8String OPTIONAL, 
+    deviceInfo [1] DeviceInfo, 
+    operationType [2] OperationType DEFAULT {profileDownload}, 
+    iccid Iccid OPTIONAL, 
+    matchingIdSource [3] MatchingIdSource OPTIONAL, 
+    vendorSpecificExtension [4] VendorSpecificExtension OPTIONAL 
+}
+CtxParamsForDeviceChange ::= SEQUENCE {
+    iccid Iccid,
+    deviceInfo [1] DeviceInfo,
+    targetEidValue [APPLICATION 26] Octet16 OPTIONAL,
+    targetTacValue [2] Octet4 OPTIONAL,
+    vendorSpecificExtension [3] VendorSpecificExtension OPTIONAL
+}
+CtxParamsForProfileRecovery ::= SEQUENCE { 
+    iccid Iccid,
+    deviceInfo [1] DeviceInfo,
+    vendorSpecificExtension [2] VendorSpecificExtension OPTIONAL
+}
+CtxParamsForPushServiceRegistration ::= SEQUENCE { 
+    selectedPushService [0] OBJECT IDENTIFIER,
+    pushToken [1] UTF8String
+}
+MatchingIdSource ::= CHOICE {
+    none [0] NULL, -- //if no matchingId generated during Download and Initiation//
+    activationCode [1] NULL, 
+    smdsOid [2] OBJECT IDENTIFIER -- //If Event Registration //
+}
+OperationType ::= BIT STRING {
+    profileDownload(0),
+    rpm(1)
+}
+SessionContext ::= SEQUENCE {
+    serverSvn [0] VersionType, -- RSP Server SVN (provided for information only)
+    crlStaplingV3Used [1] BOOLEAN,
+    euiccCiPKIdToBeUsedV3 [2] SubjectKeyIdentifier OPTIONAL,
+    supportedPushServices [3] SEQUENCE OF OBJECT IDENTIFIER OPTIONAL
+}
+ServerRspCapability ::= BIT STRING {
+    crlStaplingV3Support (0), -- support for CRL stapling
+    eventListSigningV3Support (1), -- support for Event Record signing
+    pushServiceV3Support (2), -- support for Push Service
+    cancelForEmptySpnPnSupport (3)
+}
+end note
+
+euicc -> euicc: Verify
+  note right #Snow
+  Verify the following:
+  
+  1. Server certificate chain
+  2. serverSignature1 performed over serverSigned1
+  3. euiccChallenge contained in serverSigned1 matches
+     the one generated by the eUICC in an earlier step
+  end note
+
+euicc -> euicc: Generate response
+euicc --> lpad: Send <font color=magenta>"ES10b.AuthenticateServer"</font> response
+rnote right #Motivation
+AuthenticateServerResponse ::= [56] CHOICE {
+  authenticateResponseOk [0] AuthenticateResponseOk,
+  authenticateResponseError [1] AuthenticateResponseError
+}
+
+AuthenticateResponseOk ::= SEQUENCE {
+  **euiccSigned1** EuiccSigned1,
+  **euiccSignature1** [APPLICATION 55] OCTET STRING, 
+  euiccCertificate Certificate, 
+  nextCertInChain Certificate, 
+  **otherCertsInChain** [0]  CertificateChain OPTIONAL 
+}
+
+EuiccSigned1 ::= SEQUENCE {
+  transactionId [0] TransactionId,
+  serverAddress [3] UTF8String,
+  serverChallenge [4] Octet16,
+  euiccInfo2[34] EUICCInfo2,
+  ctxParams1 CtxParams1
+}
+AuthenticateResponseError ::= SEQUENCE {
+}
+AuthenticateErrorCode ::= INTEGER {
+}
+end note  
+
+lpad -> smxx: Calls the <font color=magenta>"ES9+.AuthenticateClient"</font> request\n(Same function is used for ES11.AuthenticateClient)
+rnote right #MOTIVATION
+AuthenticateClientRequest ::= [59] SEQUENCE { 
+    transactionId [0] TransactionId,
+    authenticateServerResponse [56] AuthenticateServerResponse, 
+    deleteNotificationForDc [1] DeleteNotificationForDc 
+}
+end note
+
+smxx -> smxx: Verify
+ note right #Snow
+ 
+ Verify the following:
+ 1. Verify transaction id matches
+ 1. eUICC certificate chain
+ 2. euiccSignature1 performed over euiccSignature1 
+ 3. euiccSigned1
+ end note
+
+alt#Silver if SM-DP+
+  smxx --> lpad: Send <font color=magenta>"ES9+.AuthenticateClient"</font> response
+  rnote left #Motivation 
+  AuthenticateClientResponseEs9 ::= [59] CHOICE {
+      authenticateClientOk AuthenticateClientOk,
+      authenticateClientError INTEGER {
+      },
+      authenticateClientOkRpm AuthenticateClientOkRpm, 
+      authenticateClientOkDeviceChange AuthenticateClientOkDeviceChange 
+  }
+    AuthenticateClientOk ::= SEQUENCE {
+      transactionId [0] TransactionId,
+      profileMetadata [37] StoreMetadataRequest OPTIONAL,
+      smdpSigned2 [1] SmdpSigned2 OPTIONAL, 
+      smdpSignature2 [APPLICATION 55] OCTET STRING OPTIONAL, 
+      smdpCertificate Certificate 
+  }
+    AuthenticateClientOkRpm ::= SEQUENCE {
+      transactionId [0] TransactionId,
+      smdpSigned3 [3] SmdpSigned3,
+      smdpSignature3 [APPLICATION 55] OCTET STRING
+  }
+    AuthenticateClientOkDeviceChange ::= SEQUENCE {
+      transactionId [0] TransactionId,
+      smdpSigned4 [1] SmdpSigned4,
+      smdpSignature4 [APPLICATION 55] OCTET STRING, -
+      serviceProviderMessageForDc [1] LocalisedTextMessage OPTIONAL 
+  }
+  end note
+
+else if SM-DS
+autonumber 16.2
+smxx --> lpad: Send <font color=magenta>"ES11.AuthenticateClient"</font> response
+rnote left #Motivation
+AuthenticateClientResponseEs11 ::= [64] CHOICE {
+    authenticateClientOk AuthenticateClientOkEs11V2,
+    authenticateClientError INTEGER {
+    },
+    authenticateClientOkV3 AuthenticateClientOkEs11V3
+}
+AuthenticateClientOkEs11V2 ::= SEQUENCE {
+    transactionId [0] TransactionId,
+    eventEntries [1] SEQUENCE OF EventRecord
+}
+EventRecord ::= SEQUENCE {
+    eventId UTF8String,
+    rspServerAddress UTF8String
+}
+AuthenticateClientOkEs11V3 ::= SEQUENCE {
+    transactionId [0] TransactionId,
+    smdsSigned2 [1] SmdsSigned2,
+    smdsSignature2 [APPLICATION 55] OCTET STRING
+}
+SmdsSigned2 ::= SEQUENCE {
+  transactionId [0] TransactionId,
+  requestSpecificData CHOICE {
+      eventList [0] SEQUENCE {
+          eventEntries [1] SEQUENCE OF EventRecordV3,
+          ecId [2] OCTET STRING(SIZE(16..32)) OPTIONAL,
+          pushServiceRefreshTime [3] GeneralizedTime OPTIONAL
+      },
+      pushServiceRegistrationResult [1] SEQUENCE {
+          pushServiceRefreshTime [3] GeneralizedTime OPTIONAL
+      }
+  }
+}
+EventRecordV3 ::= SEQUENCE {
+    eventId UTF8String,
+    rspServerAddress UTF8String,
+    eventType INTEGER, -- either 1 (for Profile Download) or 2 (for RPM)
+    hashedIccids SEQUENCE OF OCTET STRING (SIZE(32)) OPTIONAL,
+    salt OCTET STRING (SIZE(8..16)) OPTIONAL,
+    serviceProviderName [17] UTF8String (SIZE(0..32)) OPTIONAL,
+    operatorId [23] OperatorId OPTIONAL
+}
+end note
+end
+
+
+== 17 Continue... ==
+
+@enduml

@@ -1,0 +1,133 @@
+@startuml enable_profile
+autonumber
+title §3.2.1 Enable Profile (SGP.22 v3.0)
+footer \n\n§3.2.1 Enable Profile (SGP.22 v3.0)\n<:1f4cc:> https://www.linkedin.com/in/allanalfante/
+skinparam sequenceMessageAlign center
+skinparam ParticipantPadding 20
+skinparam BoxPadding 10
+skinparam SequenceGroupBorderColor #Navy
+
+'''
+'PARTICPANTS
+''''
+actor "End User" as user
+box "Device" #WhiteSmoke
+  participant "LUId" as luid
+  participant "eUICC\nLPA Services (ISD-R)" as services
+  participant "Device Baseband" as baseband
+end box
+
+'''
+'CALL FLOW
+''''
+note over user #Snow
+1. End User sees list of installed Profiles (Enabled/Disabled).
+2. End User selects Profile to be **Enabled**.
+end note
+
+luid -> services: Command Port calls <font color=magenta>"ES10c.EnableProfile"</font> function\non Terminal Port
+rnote left #Motivation
+EnableProfileRequest ::= SEQUENCE {
+  profileIdentifier CHOICE {
+    isdpAid [APPLICATION 15] Octet16,
+    iccid Iccid -- ICCID,
+  },
+  **refreshFlag** BOOLEAN, 
+  targetEsimPort INTEGER OPTIONAL -- **only for MEP-A1**
+} 
+end note
+
+group <font color=red>If Profile NOT Disabled or other possible errors</font> 
+  services --> luid: Sends <font color=magenta>"ES10c.EnableProfile"</font> response
+    rnote right #Motivation
+      EnableProfileResponse ::= SEQUENCE { -- Tag 'BF31'
+        enableResult INTEGER {
+          profileNotInDisabledState(2),
+          disallowedByPolicy(3),
+          wrongProfileReenabling(4),
+          disallowedByEnterpriseRule(6)
+        },
+        targetEsimPort INTEGER OPTIONAL
+      }
+    end note
+end
+
+== refreshFlag TRUE ==
+
+alt#Gold <font color=red>Card Application Toolkit (CAT) busy</font>
+  autonumber 2
+  services --> luid: Sends <font color=magenta>"ES10c.EnableProfile"</font> response
+  rnote right #Motivation
+    EnableProfileResponse ::= SEQUENCE { -- Tag 'BF31'
+      enableResult INTEGER {
+        catBusy(5)
+      }
+    }
+  end note    
+else <font color=green>Not busy</font>
+  autonumber 2
+  services --> luid: Sends <font color=magenta>"ES10c.EnableProfile"</font> response
+  rnote right #Motivation
+    EnableProfileResponse ::= SEQUENCE { -- Tag 'BF31'
+      enableResult INTEGER {
+        ok(0),
+      },
+      targetEsimPort INTEGER OPTIONAL -- **include for MEP-A2**
+    }
+  end note
+  services -> baseband: Sends REFRESH to Target Port
+  baseband --> services: Terminal response or RESET of Target Port
+  note over services #Snow
+  ISD-R SHALL disable the currently Enabled Profile, (if any) 
+  and then **ENABLE** the Target Profile on the Target Port
+  end note
+end
+
+note over baseband #Snow
+Baseband triggers the Network Attach procedure
+with the newly Enabled Profile on the Target Port.
+end note
+
+note over luid #Snow
+Triggers a Profile Content
+Management session.
+end note
+
+== refreshFlag FALSE ==
+
+note over services #Snow
+If **refreshFlag** NOT set and a Profile currently is enabled on the Target Port:
+
+1. Run the application session termination procedure.
+2. Close all logical channels.
+3. Terminate an ongoing proactive command session.
+end note
+
+note over services #Snow
+For **MEP-A2**, the __eUICC SHALL select__ an eSIM Port which 
+currently has no Profile enabled as Target Port. 
+end note
+autonumber 2
+services --> luid: Sends <font color=magenta>"ES10c.EnableProfile"</font> response
+rnote right #Motivation
+  EnableProfileResponse ::= SEQUENCE { -- Tag 'BF31'
+    enableResult INTEGER {
+      ok(0),
+    },
+    targetEsimPort INTEGER OPTIONAL -- **include for MEP-A2**
+  }
+end note
+luid -> baseband: The LPA signals the baseband connected to the Target Port that a new Profile was enabled.\nThe Device SHALL proceed with the UICC activation procedure.
+
+note over baseband #Snow
+Baseband triggers the Network Attach procedure
+with the newly Enabled Profile on the Target Port.
+end note
+
+note over luid #Snow
+Triggers a Profile Content
+Management session.
+end note
+
+
+@enduml

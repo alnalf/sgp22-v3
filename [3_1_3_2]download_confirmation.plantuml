@@ -1,0 +1,112 @@
+@startuml download_confirm
+autonumber
+title §3.1.3.2 Download Confirmation(SGP.22 v3.0)
+footer \n\n§3.1.3.2 Download Confirmation (SGP.22 v3.0)\n<:1f4cc:> https://www.linkedin.com/in/allanalfante/
+skinparam sequenceMessageAlign center
+skinparam ParticipantPadding 20
+skinparam BoxPadding 10
+skinparam SequenceGroupBorderColor #Navy
+
+'''
+'PARTICPANTS
+''''
+actor "End-User" as user
+participant "Operator" as operator
+database "SM-DP+" as smdp
+participant "LPAd" as lpad
+participant "eUICC" as euicc
+
+hnote over user, euicc
+**Start condition:** The End User has agreed to the download of the Profile (Activation Code or QR Code).
+end note
+
+lpad -> euicc: Calls the <font color=magenta>"ES10b.PrepareDownload"</font> request
+rnote left #Motivation 
+PrepareDownloadRequest ::= SEQUENCE {
+    smdpSigned2 **SmdpSigned2**,
+    smdpSignature2 OCTET STRING,
+    **hashCc** Octet32 OPTIONAL,
+    smdpCertificate Certificate
+  }
+  **SmdpSigned2** ::= SEQUENCE {
+    transactionId [0] TransactionId, 
+    ccRequiredFlag BOOLEAN,
+    bppEuiccOtpk [APPLICATION 73] OCTET STRING OPTIONAL, 
+    rpmPending NULL OPTIONAL 
+}
+end note
+
+euicc --> lpad: Sends <font color=magenta>"ES10.PrepareDownload"</font> response
+rnote right #Motivation 
+**PrepareDownloadResponse** ::= **CHOICE** {
+    downloadResponseOk PrepareDownloadResponseOk, 
+}
+PrepareDownloadResponseOk ::= SEQUENCE {
+    euiccSigned2 EUICCSigned2,
+    euiccSignature2 OCTET STRING
+}
+EUICCSigned2 ::= SEQUENCE {
+    transactionId TransactionId,
+    euiccOtpk OCTET STRING,
+    hashCc Octet32 OPTIONAL,
+    additionalInformation VendorSpecificExtension OPTIONAL
+}
+end note
+
+lpad -> smdp: Calls the <font color=magenta>"ES9+.GetBoundProfilePackage"</font> request
+rnote right #Motivation
+GetBoundProfilePackageRequest ::= [58] SEQUENCE { 
+  transactionId [0] TransactionId,
+  prepareDownloadResponse [33] **PrepareDownloadResponse**
+}
+end note
+
+  note over smdp #Snow
+  Verify the following:
+
+  1. euiccSignature2
+  2. if Confirmation Code required
+  end note
+
+
+smdp -> operator: Call the <font color=magenta>"ES2+.HandleNotification"</font> function\nnotificationEvent = 3 BPP download or (RPM download)
+rnote right
+{
+  "timestamp": "2023-09-13T12:00:00Z",
+  **"notificationEvent": 3**,
+  "notificationEventStatus": {
+    "status": "Sucess"
+  }
+}
+end note
+
+smdp --> lpad: Sends <font color=magenta>"ES9+.GetBoundProfilePackage"</font> response
+rnote left #Motivation
+GetBoundProfilePackageResponse ::= CHOICE {
+  getBoundProfilePackageOk GetBoundProfilePackageOk,
+}
+GetBoundProfilePackageOk ::= SEQUENCE {
+    **transactionId** TransactionId,
+    boundProfilePackage BoundProfilePackage
+}
+BoundProfilePackage ::= [54] SEQUENCE {
+    initialiseSecureChannelRequest [35] InitialiseSecureChannelRequest,
+    firstSequenceOf87 [0] SEQUENCE OF [7] OCTET STRING,
+    sequenceOf88 [1] SEQUENCE OF [8] OCTET STRING,
+    secondSequenceOf87 [2] SEQUENCE OF [7] OCTET STRING OPTIONAL,
+    sequenceOf86 [3] SEQUENCE OF [6] OCTET STRING
+}
+InitialiseSecureChannelRequest ::= [35] SEQUENCE {
+    remoteOpId RemoteOpId,
+    transactionId [0] TransactionId,
+    controlRefTemplate [6] IMPLICIT ControlRefTemplate,
+    smdpOtpk [APPLICATION 73] OCTET STRING, 
+    smdpSign [APPLICATION 55] OCTET STRING 
+}
+end note
+
+hnote over user, euicc
+Refer to §3.1.3.3 Sub-procedure Profile Installation
+end note
+
+@enduml

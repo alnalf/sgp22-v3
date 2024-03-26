@@ -1,0 +1,107 @@
+@startuml rpm_initiation
+autonumber
+title §3.7.1 RPM Initiation (SGP.22 v3.0)
+footer \n\n§3.7.1 RPM Initiation (SGP.22 v3.0)\n<:1f4cc:> https://www.linkedin.com/in/allanalfante/
+skinparam sequenceMessageAlign center
+skinparam ParticipantPadding 20
+skinparam BoxPadding 10
+skinparam SequenceGroupBorderColor #Silver
+
+'''
+'PARTICPANTS
+''''
+participant "Operator" as operator
+database "SM-DP+" as smdp
+database "SM-DS" as smds
+
+'''
+'CALL FLOW
+''''
+operator <- operator: Generate matchingId
+operator -> smdp: Call the <font color=magenta>"ES2+.RpmOrder"</font> function
+  rnote left
+    POST /gsma/rsp2/es2plus/rpmOrder HTTP/1.1    
+    {
+      "header": {
+        "functionRequesterIdentifier": "RequesterID",
+        "functionCallIdentifier": "TX-570"
+      },
+      "eid": "1234567890abcdef1234567890abcdef12345678",
+      "rpmScript": "SGVsbG8gV29ybGQh",
+      "matchingId": "matching-id",
+      "rootSmdsAddress": "smds.example.com",
+      "altSmdsAddress": "alt-smds.example.com"
+    }
+  end note
+
+smdp -> smdp: Verify that the Operator is the\nProfile Owner of all targeted Profiles.
+smdp -> smdp: Prepares an RPM Package
+
+rnote right #MOTIVATION
+RpmPackage ::= SEQUENCE OF RpmCommand
+RpmCommand ::= SEQUENCE {
+  continueOnFailure [0] NULL OPTIONAL,
+  rpmCommandDetails CHOICE {
+      enable [1] SEQUENCE { iccid [APPLICATION 26] Iccid },
+      disable [2] SEQUENCE { iccid [APPLICATION 26] Iccid },
+      delete [3] SEQUENCE { iccid [APPLICATION 26] Iccid },
+      listProfileInfo [4] ListProfileInfo,
+      updateMetadata [5] SEQUENCE {
+          iccid [APPLICATION 26] Iccid,
+          updateMetadataRequest UpdateMetadataRequest
+      },
+      contactPcmp [6] SEQUENCE {
+          iccid [APPLICATION 26] Iccid,
+          dpiRpm UTF8String OPTIONAL
+      }
+  }
+}
+end note
+
+opt Event Registration if there is SM-DS 
+  smdp -> smdp: If matchingId is not provided in Step 2, generate\n<font color=red>**matchingId** and __associate__ it with the **RPM Package**</font>.
+  
+  smdp -> smds: Call the <font color=magenta>"ES12.RegisterEvent"</font> function
+    rnote left
+    POST /gsma/rsp2/es12/<font color=magenta>registerEvent</font> HTTP/1.1    
+    {
+      "eid": "1234567890abcdef",
+      "rspServerAddress": "smds.example.com",
+      "eventId": "matching-id",
+      "forwardingIndicator": true,
+      "rootSmdsAddress": "smds.root.example.com",
+      "eventType": 1,
+      "hashedIccids": [
+        "0123456789abcdef",
+        "fedcba9876543210"
+      ],
+      "salt": "fedcba9876543210",
+      "serviceProviderName": "My Service Provider",
+      "operatorId": "base64 encoded operator ID"
+    }
+    end note
+  
+  smds --> smdp: Sends <font color=magenta>"ES12.RegisterEvent"</font> response
+    rnote right 
+    HTTP/1.1 200 OK    
+    {
+      "header": {
+        "functionExecutionStatus": {
+          "status": "Executed-Success"
+        }
+      }
+    }
+    end note
+end
+
+
+smdp --> operator: Sends <font color=magenta>"ES2+.RpmOrder"</font> response
+  rnote right
+    HTTP/1.1 200 OK
+    Content-Type: application/json    
+    {
+      "matchingId": "matching-id"
+    }
+  end note
+
+@enduml

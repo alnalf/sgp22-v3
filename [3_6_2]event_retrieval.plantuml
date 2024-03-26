@@ -1,0 +1,194 @@
+@startuml event_retrieval
+
+title §3.6.2 Event Retrieval (SGP.22 v3.0)
+footer \n\n§3.6.2 Event Retrieval (SGP.22 v3.0)\n<:1f4cc:> https://www.linkedin.com/in/allanalfante/
+skinparam sequenceMessageAlign center
+skinparam ParticipantPadding 20
+skinparam BoxPadding 10
+skinparam SequenceGroupBorderColor #Navy
+
+'''
+'PARTICPANTS
+''''
+database "SM-DS" as smds
+participant "LPAd" as lpad
+participant "eUICC" as euicc
+
+'''
+'CALL FLOW
+''''
+hnote over smds, euicc
+Refer to §3.0.1 Common Mutual Authentication Procedure (AuthenticateServer and AuthenticateClient).
+end note
+
+note over smds #Snow
+matchingId is from ES2+.ConfirmOrder
+sent by the Operator to SM-DP+ then sent
+as eventId from ES12.RegisterEvent to SM-DS
+end note
+
+alt#Gold <font color=red>No matchingId provided</font>
+  note over smds #Snow
+  EID and EventType are part of the
+  ES12.RegisterEvent (cascade)
+  end note
+  smds -> smds: Verify is EID and EventType matches\nfrom Mutual Authentication & ES12.RegisterEvent
+else <font color=green>matchingId provided</font>
+  smds -> lpad: some
+end
+
+== begin condition ==
+lpad -> smds: Calls the <font color=magenta>"ESXX.InitiateAuthentication"</font> function
+  rnote right #Motivation
+InitiateAuthenticationRequest ::= [57] SEQUENCE { -- Tag 'BF39'
+  euiccChallenge [1] Octet16, -- random eUICC challenge
+  smdpAddress [3] UTF8String,
+  euiccInfo1 EUICCInfo1,
+  lpaRspCapability LpaRspCapability OPTIONAL -- #SupportedFromV3.0.0#
+}
+
+-- Definition of LpaRspCapability
+LpaRspCapability ::= BIT STRING {
+   crlStaplingV3Support (0),
+   certChainV3Support (1),
+   apduApiSupport (2),
+   enterpriseCapableDevice (3),
+   lpaProxySupport (4),
+   **signedSmdsResponseV3Support** (5),
+   euiccCiUpdateSupport (6),
+   eventCheckingSupport (7),
+   pushServiceSupport (8),
+   pendingOperationAlertingSupport (9)
+}
+  end note
+
+  rnote over smds #Snow
+  -- Definition of ServerRspCapability
+  **ServerRspCapability** ::= BIT STRING {
+    crlStaplingV3Support (0), -- support for CRL stapling
+    **eventListSigningV3Support** (1), -- support for Event Record signing
+    pushServiceV3Support (2), -- support for Push Service
+    cancelForEmptySpnPnSupport (3)
+  }
+  end note  
+== end ==
+
+alt#Gold <font color=green>LPA and SM-DS supports signed event records</font>
+  smds -> lpad: Sends <font color=magenta>"ES11.InitiateAuthentication"</font> response
+    rnote left #Motivation 
+    AuthenticateClientResponseEs11 ::= CHOICE {
+      authenticateClientOkV3 AuthenticateClientOkEs11V3
+    }
+    
+    AuthenticateClientOkEs11V3 ::= SEQUENCE {
+      **transactionId** TransactionId,
+      **smdpSigned2** SmdsSigned2,
+      **smdpSignature2** OCTET STRING -- tag '5F37'
+    }
+    
+    SmdsSigned2 ::= SEQUENCE {
+      transactionId TransactionId,
+      requestSpecificData CHOICE {
+        eventList SEQUENCE {
+          eventEntries SEQUENCE OF EventRecordV3,
+          ecId OCTET STRING(SIZE(16..32)) OPTIONAL, 
+          pushServiceRefreshTime GeneralizedTime OPTIONAL 
+        },
+        pushServiceRegistrationResult SEQUENCE {
+          pushServiceRefreshTime GeneralizedTime OPTIONAL 
+        }
+      }
+    }
+    end note
+
+  lpad -> euicc: Call the <font color=magenta>"ES10a.VerifySmdsResponse"</font> function
+    rnote left #Motivation
+      VerifySmdsResponseRequest ::= SEQUENCE { 
+        smdpSigned2 SmdsSigned2, -- must have tag [1]
+        smdpSignature2 OCTET STRING
+      }
+      
+      SmdsSigned2 ::= SEQUENCE {
+        transactionId TransactionId,
+        requestSpecificData CHOICE {
+          eventList SEQUENCE {
+            eventEntries SEQUENCE OF EventRecordV3,
+            ecId OCTET STRING(SIZE(16..32)) OPTIONAL, 
+            pushServiceRefreshTime GeneralizedTime OPTIONAL 
+          },
+          pushServiceRegistrationResult SEQUENCE {
+            pushServiceRefreshTime GeneralizedTime OPTIONAL 
+          }
+        }
+      }
+      
+      **EventRecordV3** ::= SEQUENCE { 
+        eventId UTF8String,
+        rspServerAddress UTF8String,
+        eventType INTEGER {
+          1, -- for Profile Download
+          2 -- for RPM
+        },
+        hashedIccids SEQUENCE OF OCTET STRING (SIZE(32)) OPTIONAL, 
+        salt OCTET STRING (SIZE(8..16)) OPTIONAL, 
+        serviceProviderName [17] UTF8String (SIZE(0..32)) OPTIONAL,
+        operatorId [23] OperatorId OPTIONAL
+      }
+    end note
+
+  euicc -> lpad: Sends <font color=magenta>"ES10a.VerifySmdsResponse"</font> response
+    rnote right #Motivation
+      VerifySmdsResponseResponse ::= CHOICE { 
+        verifySmdsResponseOk NULL,
+        verifySmdsResponseError INTEGER {
+          invalidSignature(2),
+          noSession(4),
+          invalidTransactionId(5),
+          undefinedError(127)
+        }
+      }
+    end note
+
+
+else <font color=green>Otherwise...</font>
+  smds -> lpad: Sends <font color=magenta>"ES11.InitiateAuthentication"</font> response
+  rnote left #Motivation
+  AuthenticateClientResponseEs11 ::= CHOICE {
+  authenticateClientOk AuthenticateClientOkEs11V2,
+}
+
+AuthenticateClientOkEs11V2 ::= SEQUENCE {
+  **transactionId** TransactionId,
+  eventEntries SEQUENCE OF EventRecord
+}
+
+**EventRecord** ::= SEQUENCE {
+  eventId UTF8String,
+  rspServerAddress UTF8String
+}
+  end note
+end
+
+
+note over lpad #Snow
+LPAd to ignore Event Record if:
+
+1. Profile that will be installed by the Event Record is **already installed**. 
+2. The target Profile(s) of the RPM Package that will be received by 
+the Event Record is **NOT available**. 
+3. Check if the Service Provider and/or Operator **is NOT** Profile Owner of
+the target Profile(s). 
+end note
+
+note over lpad #Snow
+LPAd to sequentially contacting each RSP Server with the corresponding 
+EventID  with MatchingID source set to the OID of the SM-DS from which 
+the Events were retrieved.
+end note
+
+note over lpad #Snow
+If the ECID was received in the response from an SM-DS, the 
+__LPAd SHOULD store and associate the ECID with the SM-DS address__.
+end note
+
+@enduml
